@@ -30,6 +30,7 @@ wheels/
 
 # Local logs
 *.txt
+!requirements.txt
 *.log
 
 # Project specific

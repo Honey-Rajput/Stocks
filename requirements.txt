@@ -1,0 +1,8 @@
+# Requirements for Stock Market AI Agent
+streamlit
+yfinance
+pandas-ta
+plotly
+pandas
+numpy
+requests
