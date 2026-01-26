@@ -4,6 +4,7 @@ import pandas_ta as ta
 import numpy as np
 import requests
 import json
+import time
 
 # Analysis Engine for technical indicators and AI insights
 class AnalysisEngine:
@@ -17,15 +18,23 @@ class AnalysisEngine:
         
     def _fetch_data(self):
         # Using auto_adjust=True for cleaner technical analysis data
-        df = yf.download(self.ticker, period=self.period, interval=self.interval, auto_adjust=True)
-        if df.empty:
-            raise ValueError(f"No data found for {self.ticker}")
-        
-        # Handle recent yfinance versions returning MultiIndex even for single ticker
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
+        # Implement retry logic to handle transient yfinance failures
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                df = yf.download(self.ticker, period=self.period, interval=self.interval, auto_adjust=True)
+                if not df.empty:
+                    # Handle recent yfinance versions returning MultiIndex even for single ticker
+                    if isinstance(df.columns, pd.MultiIndex):
+                        df.columns = df.columns.get_level_values(0)
+                    return df
+            except Exception:
+                pass
             
-        return df
+            if attempt < max_retries - 1:
+                time.sleep(1) # Wait 1 second before retrying
+                
+        raise ValueError(f"No data found for {self.ticker} after {max_retries} attempts")
 
     def add_indicators(self):
         # EMAs
