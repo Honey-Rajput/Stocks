@@ -69,7 +69,7 @@ nse_stocks_dict = get_nse_stocks()
 stock_options = sorted(list(nse_stocks_dict.keys()))
 
 # Sidebar
-st.sidebar.title("🛠️ Agent Configuration")
+st.sidebar.title("🛠️ Agent")
 
 # Consolidated stock selection (Ticker and Name in "One Place")
 selected_stock_str = st.sidebar.selectbox("Select Stock (Ticker or Name)", 
