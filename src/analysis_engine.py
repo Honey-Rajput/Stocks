@@ -359,8 +359,13 @@ class AnalysisEngine:
         
         last = df.iloc[-1]
         prev_10 = df.iloc[-10]
-        sma30 = last.get('SMA_150', last['SMA_200']) # Fallback to 200 if 150 missing
+        
+        # Safe column access
         price = last['Close']
+        ema50 = last.get('EMA_50', price)
+        ema150 = last.get('EMA_150', price)
+        sma150 = last.get('SMA_150', last.get('SMA150', price))
+        sma200 = last.get('SMA_200', last.get('SMA200', sma150))
         slope = last.get('MA_Slope_30wk', 0)
         rs = last.get('Mansfield_RS', 0)
         rs_trend = last.get('RS_Trend', 0)
@@ -376,38 +381,38 @@ class AnalysisEngine:
         
         # 1. Minervini Trend Template (VCP context)
         minervini = {
-            "Price > 50 EMA": price > last['EMA_50'],
-            "50 EMA > 150 EMA": last['EMA_50'] > last['EMA_150'],
-            "150 EMA > 200 SMA": last['EMA_150'] > last['SMA_200'],
-            "Price > 200 SMA": price > last['SMA_200'],
+            "Price > 50 EMA": price > ema50,
+            "50 EMA > 150 EMA": ema50 > ema150,
+            "150 EMA > 200 SMA": ema150 > sma200,
+            "Price > 200 SMA": price > sma200,
             "30-Week MA Rising": slope > 0,
             "RS is Positive/Improving": rs > 0 or rs_trend > 0
         }
         
         # 2. Weinstein Stage Logic (Strict)
         # Stage 1: Flat MA + sideways price
-        if abs(slope) < (sma30 * 0.0005) and not is_uptrend and not is_downtrend:
+        if abs(slope) < (sma150 * 0.0005) and not is_uptrend and not is_downtrend:
             stage = "Stage 1 - Basing / Accumulation"
             color = "#EAB308" # Yellow
             action = "Watchlist Only"
         # Stage 2: Rising MA + price above MA
-        elif price > sma30 and slope > 0 and is_uptrend:
+        elif price > sma150 and slope > 0 and is_uptrend:
             stage = "Stage 2 - Advancing / Uptrend"
             color = "#10b981" # Green
             action = "BUY / HOLD"
         # Stage 3: Flat MA after uptrend + topping
-        elif abs(slope) < (sma30 * 0.0005) and rs_trend < 0:
+        elif abs(slope) < (sma150 * 0.0005) and rs_trend < 0:
             stage = "Stage 3 - Topping / Distribution"
             color = "#F97316" # Orange
             action = "Exit Partially / Tighten SL"
         # Stage 4: Falling MA + price below MA
-        elif price < sma30 and slope < 0:
+        elif price < sma150 and slope < 0:
             stage = "Stage 4 - Declining / Downtrend"
             color = "#ef4444" # Red
             action = "SELL / AVOID"
         else:
             # Transitionary states
-            if price > sma30:
+            if price > sma150:
                 stage = "Stage 2 (Emerging)" if slope > 0 else "Stage 1 (Late)"
                 color = "#10b981" if slope > 0 else "#EAB308"
             else:
