@@ -438,68 +438,8 @@ class AnalysisEngine:
             }
         }
 
-    def get_stage_analysis(self):
-        """Perform Stan Weinstein Stage Analysis and Mark Minervini Trend Template check."""
-        df = self.data.tail(150).copy()
-        if len(df) < 50: return None
-        
-        last = df.iloc[-1]
-        prev_10 = df.iloc[-10]
-        
-        # 1. Minervini Trend Template Checklist
-        minervini = {
-            "Price > 50 EMA": last['Close'] > last['EMA_50'],
-            "50 EMA > 150 EMA": last['EMA_50'] > last['EMA_150'],
-            "150 EMA > 200 SMA": last['EMA_150'] > last['SMA_200'],
-            "Price > 200 SMA": last['Close'] > last['SMA_200'],
-            "200 SMA Rising (10 bars)": last['SMA_200'] > prev_10['SMA_200']
-        }
-        
-        # 2. Stan Weinstein Stage Analysis
-        sma200 = last['SMA_200']
-        price = last['Close']
-        ma_rising = last['SMA_200'] > prev_10['SMA_200']
-        ma_falling = last['SMA_200'] < prev_10['SMA_200']
-        
-        if price > sma200 and ma_rising:
-            stage = "Stage 2 - Advancing"
-            color = "#10b981" # Bullish Green
-        elif price < sma200 and ma_falling:
-            stage = "Stage 4 - Declining"
-            color = "#ef4444" # Bearish Red
-        elif abs(price - sma200) / sma200 < 0.05: # Within 5% of MA
-            stage = "Stage 1 - Basing" if ma_rising else "Stage 3 - Top Area"
-            color = "#6b7280" # Neutral Gray
-        else:
-            stage = "Transitioning"
-            color = "#f59e0b" # Warning Orange
-            
-        # 3. CPR Calculation (Central Pivot Range)
-        h, l, c = last['High'], last['Low'], last['Close']
-        pivot = (h + l + c) / 3
-        bc = (h + l) / 2
-        tc = (pivot - bc) + pivot
-        
-        cpr_width = abs(tc - bc)
-        width_type = "Narrow" if cpr_width / price < 0.01 else "Wide"
-        
-        prev = df.iloc[-2]
-        prev_p = (prev['High'] + prev['Low'] + prev['Close']) / 3
-        cpr_type = "Ascending" if pivot > prev_p else "Descending"
-        
-        return {
-            "minervini": minervini,
-            "weinstein": {
-                "stage": stage,
-                "color": color,
-                "bars": 12 
-            },
-            "cpr": {
-                "width": width_type,
-                "type": cpr_type,
-                "range": round(h - l, 2)
-            }
-        }
+    def get_smc_context(self):
+        """Finds Fair Value Gaps, Order Blocks, and Market Structure (SMC)."""
         df = self.data.tail(100).copy() # Work with recent data
         if len(df) < 5:
             return None
