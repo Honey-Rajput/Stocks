@@ -511,7 +511,7 @@ if ticker:
                         icon = "✅" if met else "❌"; color = "#10b981" if met else "#ef4444"
                         st.markdown(f"<p style='margin:0; font-size:16px;'>{icon} <span style='color:{color}'>{criteria}</span></p>", unsafe_allow_html=True)
                 with col2:
-                    st.markdown(f"""<div style="background-color: #1e2130; color: white; padding: 10px; border-radius: 5px; font-weight: bold; margin-bottom: 15px;">📌 Stan Weinstein Stage Analysis</div><div style="background-color: {stage_data['weinstein']['color']}; color: white; padding: 8px 15px; font-size: 18px; font-weight: bold; border-left: 5px solid white;">Current Stage: {stage_data['weinstein']['stage']}</div><div style="background-color: #d1d5db33; padding: 5px 15px; margin-bottom: 20px; font-size: 14px;">Bars in Stage: {stage_data['weinstein']['bars']}</div>""", unsafe_allow_html=True)
+                    st.markdown(f"""<div style="background-color: #1e2130; color: white; padding: 10px; border-radius: 5px; font-weight: bold; margin-bottom: 15px;">📌 Stan Weinstein Stage Analysis</div><div style="background-color: {stage_data['weinstein']['color']}; color: white; padding: 8px 15px; font-size: 18px; font-weight: bold; border-left: 5px solid white;">Current Stage: {stage_data['weinstein']['stage']}</div><div style="background-color: #d1d5db33; padding: 5px 15px; margin-bottom: 10px; font-size: 14px;"><b>Action:</b> {stage_data['weinstein']['action']}</div><div style="background-color: #d1d5db33; padding: 5px 15px; margin-bottom: 20px; font-size: 14px;"><b>Mansfield RS:</b> {stage_data['weinstein']['rs']}</div>""", unsafe_allow_html=True)
                     st.markdown("""<table style="width:100%; border-collapse: collapse; border: 1px solid #374151; font-family: sans-serif;"><tr style="border: 1px solid #374151; background: #1e2130;"><td style="padding: 10px; font-weight: bold; color: white;">Metrics</td><td style="padding: 10px; font-weight: bold; color: white;">Value</td></tr><tr style="border: 1px solid #374151;"><td style="padding: 10px; font-weight: bold;">CPR Width</td><td style="padding: 10px;">"""+stage_data['cpr']['width']+"""</td></tr><tr style="border: 1px solid #374151;"><td style="padding: 10px; font-weight: bold;">CPR Type</td><td style="padding: 10px;">"""+stage_data['cpr']['type']+"""</td></tr><tr style="border: 1px solid #374151;"><td style="padding: 10px; font-weight: bold;">IB (Range)</td><td style="padding: 10px; color: #ef4444;">"""+str(stage_data['cpr']['range'])+"""</td></tr></table>""", unsafe_allow_html=True)
             else:
                 st.warning("Insufficient data for Stage Analysis.")
@@ -528,7 +528,7 @@ if ticker:
                         all_tickers = list(nse_stocks_dict.values())
                         stage_results = AnalysisEngine.get_weinstein_scanner_stocks(all_tickers)
                         
-                        s_tabs = st.tabs(["🏗️ Stage 1 (Basing)", "🚀 Stage 2 (Advancing)", "📉 Stage 3 (Top Area)", "💀 Stage 4 (Declining)"])
+                        s_tabs = st.tabs(["🏗️ Stage 1", "🚀 Stage 2", "📉 Stage 3", "💀 Stage 4"])
                         
                         with s_tabs[0]:
                             if stage_results["Stage 1 - Basing"]: st.dataframe(pd.DataFrame(stage_results["Stage 1 - Basing"]), use_container_width=True)

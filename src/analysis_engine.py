@@ -44,6 +44,7 @@ class AnalysisEngine:
         self.data.ta.ema(length=21, append=True)
         self.data.ta.ema(length=50, append=True) # EMA 50: Medium-term trend filter for swing setups
         self.data.ta.ema(length=150, append=True) # EMA 150: Long-term trend for Minervini/Weinstein
+        self.data.ta.sma(length=150, append=True) # SMA 150: 30-Week MA (Stan Weinstein standard)
         self.data.ta.sma(length=200, append=True) # SMA 200: Institutional trend baseline
         self.data.ta.ema(length=200, append=True)
         
@@ -81,6 +82,33 @@ class AnalysisEngine:
         self.data['Support'] = self.data['Low'].rolling(window=20).min()
         self.data['Resistance'] = self.data['High'].rolling(window=20).max()
         
+        # 30-Week MA Slope (using 10 days for daily data)
+        if 'SMA_150' in self.data.columns:
+            self.data['MA_Slope_30wk'] = self.data['SMA_150'].diff(10) / 10
+            
+        return self.data
+
+    def add_mansfield_rs(self, benchmark_symbol='^NSEI'):
+        """Calculates Mansfield Relative Strength vs Benchmark (NIFTY 50)."""
+        try:
+            benchmark = yf.download(benchmark_symbol, period=self.period, interval=self.interval, auto_adjust=True, progress=False)
+            if benchmark.empty: return self.data
+            if isinstance(benchmark.columns, pd.MultiIndex): benchmark.columns = benchmark.columns.get_level_values(0)
+            
+            common_idx = self.data.index.intersection(benchmark.index)
+            stock_prices = self.data.loc[common_idx, 'Close']
+            bench_prices = benchmark.loc[common_idx, 'Close']
+            
+            base_rs = stock_prices / bench_prices
+            # 52-week SMA of Base RS (approx 250 trading days)
+            sma_rs = base_rs.rolling(window=250).mean()
+            mansfield_rs = ((base_rs / sma_rs) - 1) * 10
+            
+            self.data.loc[common_idx, 'Mansfield_RS'] = mansfield_rs
+            if len(self.data) > 10:
+                self.data['RS_Trend'] = self.data['Mansfield_RS'].diff(10)
+        except Exception:
+            pass
         return self.data
 
     def get_financials(self):
@@ -324,79 +352,88 @@ class AnalysisEngine:
             return None
 
     def get_stage_analysis(self):
-        """Perform Stan Weinstein Stage Analysis and Mark Minervini Trend Template check."""
+        """Strict Stan Weinstein Stage Analysis based on 30-week MA (SMA 150) and Trend Structure."""
+        self.add_mansfield_rs()
         df = self.data.tail(150).copy()
         if len(df) < 50: return None
         
         last = df.iloc[-1]
         prev_10 = df.iloc[-10]
+        sma30 = last.get('SMA_150', last['SMA_200']) # Fallback to 200 if 150 missing
+        price = last['Close']
+        slope = last.get('MA_Slope_30wk', 0)
+        rs = last.get('Mansfield_RS', 0)
+        rs_trend = last.get('RS_Trend', 0)
         
-        # 1. Minervini Trend Template Checklist
-        # V1: Price > 50 EMA
-        # V2: 50 EMA > 150 EMA
-        # V3: 150 EMA > 200 SMA
-        # V4: Price > 200 SMA
-        # V5: 200 SMA is rising (proxy: last 10 days)
+        # Structure Check (Higher Highs / Lower Lows)
+        recent_high = df['High'].tail(20).max()
+        recent_low = df['Low'].tail(20).min()
+        prev_range_high = df['High'].shift(20).tail(20).max()
+        prev_range_low = df['Low'].shift(20).tail(20).min()
         
+        is_uptrend = recent_high > prev_range_high and recent_low > prev_range_low
+        is_downtrend = recent_high < prev_range_high and recent_low < prev_range_low
+        
+        # 1. Minervini Trend Template (VCP context)
         minervini = {
-            "Price > 50 EMA": last['Close'] > last['EMA_50'],
+            "Price > 50 EMA": price > last['EMA_50'],
             "50 EMA > 150 EMA": last['EMA_50'] > last['EMA_150'],
             "150 EMA > 200 SMA": last['EMA_150'] > last['SMA_200'],
-            "Price > 200 SMA": last['Close'] > last['SMA_200'],
-            "200 SMA Rising (10 bars)": last['SMA_200'] > prev_10['SMA_200']
+            "Price > 200 SMA": price > last['SMA_200'],
+            "30-Week MA Rising": slope > 0,
+            "RS is Positive/Improving": rs > 0 or rs_trend > 0
         }
         
-        # 2. Stan Weinstein Stage Analysis
-        # Stage 1: Basing (Sideways, price crossing EMA 150/SMA 200)
-        # Stage 2: Advancing (Price > rising SMA 200)
-        # Stage 3: Top Area (Price flattening near SMA 200)
-        # Stage 4: Declining (Price < falling SMA 200)
-        
-        sma200 = last['SMA_200']
-        price = last['Close']
-        ma_rising = last['SMA_200'] > prev_10['SMA_200']
-        ma_falling = last['SMA_200'] < prev_10['SMA_200']
-        
-        if price > sma200 and ma_rising:
-            stage = "Stage 2 - Advancing"
-            color = "#10b981" # Bullish Green
-        elif price < sma200 and ma_falling:
-            stage = "Stage 4 - Declining"
-            color = "#ef4444" # Bearish Red
-        elif abs(price - sma200) / sma200 < 0.05: # Within 5% of MA
-            stage = "Stage 1 - Basing" if ma_rising else "Stage 3 - Top Area"
-            color = "#6b7280" # Neutral Gray
+        # 2. Weinstein Stage Logic (Strict)
+        # Stage 1: Flat MA + sideways price
+        if abs(slope) < (sma30 * 0.0005) and not is_uptrend and not is_downtrend:
+            stage = "Stage 1 - Basing / Accumulation"
+            color = "#EAB308" # Yellow
+            action = "Watchlist Only"
+        # Stage 2: Rising MA + price above MA
+        elif price > sma30 and slope > 0 and is_uptrend:
+            stage = "Stage 2 - Advancing / Uptrend"
+            color = "#10b981" # Green
+            action = "BUY / HOLD"
+        # Stage 3: Flat MA after uptrend + topping
+        elif abs(slope) < (sma30 * 0.0005) and rs_trend < 0:
+            stage = "Stage 3 - Topping / Distribution"
+            color = "#F97316" # Orange
+            action = "Exit Partially / Tighten SL"
+        # Stage 4: Falling MA + price below MA
+        elif price < sma30 and slope < 0:
+            stage = "Stage 4 - Declining / Downtrend"
+            color = "#ef4444" # Red
+            action = "SELL / AVOID"
         else:
-            stage = "Transitioning"
-            color = "#f59e0b" # Warning Orange
-            
-        # 3. CPR Calculation (Central Pivot Range)
-        # Pivot = (H + L + C) / 3
-        # BC = (H + L) / 2
-        # TC = (Pivot - BC) + Pivot
+            # Transitionary states
+            if price > sma30:
+                stage = "Stage 2 (Emerging)" if slope > 0 else "Stage 1 (Late)"
+                color = "#10b981" if slope > 0 else "#EAB308"
+            else:
+                stage = "Stage 4 (Early)" if slope < 0 else "Stage 3 (Breaking)"
+                color = "#ef4444" if slope < 0 else "#F97316"
+            action = "Wait for Confirmation"
+
+        # CPR Calculation
         h, l, c = last['High'], last['Low'], last['Close']
         pivot = (h + l + c) / 3
         bc = (h + l) / 2
         tc = (pivot - bc) + pivot
-        
-        cpr_width = abs(tc - bc)
-        width_type = "Narrow" if cpr_width / price < 0.005 else "Wide"
-        
-        # CPR Type (Ascending/Descending vs previous day)
-        prev = df.iloc[-2]
-        prev_p = (prev['High'] + prev['Low'] + prev['Close']) / 3
-        cpr_type = "Ascending" if pivot > prev_p else "Descending"
+        width = abs(tc - bc)
         
         return {
             "minervini": minervini,
             "weinstein": {
                 "stage": stage,
                 "color": color,
-                "bars": 12 # Mocking "bars in stage" for UI consistency
+                "action": action,
+                "rs": round(rs, 2),
+                "bars": 12
             },
             "cpr": {
-                "width": width_type,
-                "type": cpr_type,
+                "width": "Narrow" if width / price < 0.005 else "Wide",
+                "type": "Ascending" if pivot > (df['High'].iloc[-2] + df['Low'].iloc[-2] + df['Close'].iloc[-2])/3 else "Descending",
                 "range": round(h - l, 2)
             }
         }
@@ -567,8 +604,8 @@ class AnalysisEngine:
         """Scans for stocks suitable for 15-20 days swing trading based on breakout logic."""
         results = []
         pool = list(ticker_pool)
-        random.shuffle(pool) 
-        for ticker in pool[:300]: 
+        # Remove randomization to fix 'results changing every 2 min' issue
+        for ticker in pool:
             try:
                 full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
                 t_obj = yf.Ticker(full_ticker)
@@ -621,11 +658,9 @@ class AnalysisEngine:
     @staticmethod
     def get_long_term_stocks(ticker_pool):
         """Filters fundamentally strong stocks for long-term holding."""
-        # ticker_pool: Full list of possible candidates for screening
         results = []
         pool = list(ticker_pool)
-        random.shuffle(pool) # Random samples to get a mix of sectors and sizes
-        for ticker in pool[:200]:
+        for ticker in pool:
             try:
                 full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
                 t = yf.Ticker(full_ticker)
@@ -659,12 +694,9 @@ class AnalysisEngine:
     @staticmethod
     def get_cyclical_stocks_by_quarter(ticker_pool):
         """Assigns stocks to quarters based on 10-year historical return seasonality."""
-        # ticker_pool: Tickers evaluated for statistical significant seasonality
         quarterly_data = {"Q1": [], "Q2": [], "Q3": [], "Q4": []}
         pool = list(ticker_pool)
-        random.shuffle(pool) # Vital for cyclical to see more than just first few alphabetical stocks
-        # Increased limit for cyclical to 350 to ensure high hit rate for seasonality
-        for ticker in pool[:350]:
+        for ticker in pool:
             try:
                 full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
                 # 10y Monthly data: Chosen to filter out short-term anomalies and find long-term seasonal patterns
@@ -702,12 +734,9 @@ class AnalysisEngine:
     @staticmethod
     def get_smart_money_stocks(ticker_pool):
         """Finds stocks with institutional accumulation footprints (VSA logic)."""
-        # ticker_pool: Live scan universe
         results = []
         pool = list(ticker_pool)
-        random.shuffle(pool) # Shuffling to find 'Smart Money' across the entire market
-        # Increased scan universe for institutional footprints
-        for ticker in pool[:300]:
+        for ticker in pool:
             try:
                 full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
                 engine = AnalysisEngine(full_ticker, interval='1d', period='60d')
@@ -738,40 +767,41 @@ class AnalysisEngine:
 
     @staticmethod
     def get_weinstein_scanner_stocks(ticker_pool):
-        """Classifies the market into Stan Weinstein's 4 Stages."""
+        """Deterministically classifies market into Weinstein Stages by Market Cap."""
         stages = {"Stage 1 - Basing": [], "Stage 2 - Advancing": [], "Stage 3 - Top": [], "Stage 4 - Declining": []}
+        # Use a localized NIFTY 100 or 200 list if possible for stability
+        # For now, we take a stable slice of the provided pool
         pool = list(ticker_pool)
-        random.shuffle(pool)
-        for ticker in pool[:300]:
+        # No more random.shuffle(pool) - ensures results don't change every 2 min
+        
+        count = 0
+        for ticker in pool:
+            if count >= 100: break # Limit for speed, but deterministic
             try:
-                full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
-                engine = AnalysisEngine(full_ticker, interval='1d', period='1y')
+                full_ticker = f"{ticker}.NS"
+                engine = AnalysisEngine(full_ticker, interval='1d', period='2y')
                 engine.add_indicators()
-                df = engine.data
-                if len(df) < 50: continue
+                res = engine.get_stage_analysis()
+                if not res: continue
                 
-                last = df.iloc[-1]
-                prev_10 = df.iloc[-10]
-                sma200 = last['SMA_200']
-                price = last['Close']
-                ma_rising = last['SMA_200'] > prev_10['SMA_200']
-                ma_falling = last['SMA_200'] < prev_10['SMA_200']
-                
-                stock_info = {
+                stage_info = res['weinstein']
+                data = {
                     "Stock Symbol": ticker,
-                    "Current Price": f"₹{price:.2f}",
-                    "Distance from SMA200": f"{((price-sma200)/sma200)*100:.1f}%",
-                    "RSI": round(last[engine.indicator_cols['rsi']], 1),
-                    "Phase": "Buy/Hold" if price > sma200 else "Avoid/Sell"
+                    "Price": f"₹{engine.data['Close'].iloc[-1]:.2f}",
+                    "RS": stage_info['rs'],
+                    "Action": stage_info['action']
                 }
-
-                if price > sma200 and ma_rising:
-                    stages["Stage 2 - Advancing"].append(stock_info)
-                elif price < sma200 and ma_falling:
-                    stages["Stage 4 - Declining"].append(stock_info)
-                elif abs(price - sma200) / sma200 < 0.05:
-                    key = "Stage 1 - Basing" if ma_rising else "Stage 3 - Top"
-                    stages[key].append(stock_info)
+                
+                if "Stage 1" in stage_info['stage']:
+                    stages["Stage 1 - Basing"].append(data)
+                elif "Stage 2" in stage_info['stage']:
+                    stages["Stage 2 - Advancing"].append(data)
+                elif "Stage 3" in stage_info['stage']:
+                    stages["Stage 3 - Top"].append(data)
+                elif "Stage 4" in stage_info['stage']:
+                    stages["Stage 4 - Declining"].append(data)
+                
+                count += 1
             except Exception:
                 continue
         return stages
