@@ -29,6 +29,20 @@ st.markdown("""
     .bullish { background-color: rgba(16, 185, 129, 0.1); border-left: 5px solid #10b981; }
     .bearish { background-color: rgba(239, 68, 68, 0.1); border-left: 5px solid #ef4444; }
     .sideways { background-color: rgba(107, 114, 128, 0.1); border-left: 5px solid #6b7280; }
+    
+    /* Wrap tab text */
+    button[data-baseweb="tab"] p {
+        white-space: normal !important;
+        text-align: center !important;
+        line-height: 1.2 !important;
+        font-size: 14px !important;
+    }
+    button[data-baseweb="tab"] {
+        height: auto !important;
+        min-height: 40px !important;
+        padding-top: 5px !important;
+        padding-bottom: 5px !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -97,6 +111,8 @@ st.sidebar.subheader("🤖 AI Intelligence")
 use_ai = st.sidebar.toggle("Enable AI Reasoning", value=True, help="Use custom LLM for advanced market commentary")
 selected_model = st.sidebar.selectbox("Select Model", 
     options=["gpt-5-nano-2025-08-07", "gpt-5-mini-2025-08-07", "gpt-4.1-nano", "gpt-4.1-mini", "gpt-oss-20b", "gpt-oss-120b"])
+# The nse_stocks_dict variable already contains the full live NSE list from EQUITY_L.csv
+# We will use this dynamically for all scanners.
 
 # Periods for indicators
 periods = {
@@ -113,14 +129,19 @@ if ticker:
         analysis = engine.analyze()
         df = engine.data
         
-        # Tabs structure restored to original feel with requested additions
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        # Tabs structure consolidated to fix blank tab issues
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
             "📊 Agent Analysis", 
             "🤖 AI Insights", 
             "📈 Technical Charts", 
             "🏢 Financials", 
             "🔗 Related Info", 
-            "🚀 Agent Recommendations"
+            "🚀 Agent Recommendations",
+            "💹 Smart Money Concept",
+            "🎯 Swing Trading (15–20 Days)",
+            "⏳ Long Term Investing",
+            "🗓️ Cyclical Stocks by Quarter",
+            "📌 Stage Analysis"
         ])
         
         with tab1:
@@ -253,6 +274,25 @@ if ticker:
                     st.write("Historical earnings data not available.")
 
                 st.info(f"**Business Summary:**\n\n{fin['summary']}")
+
+                # Seasonality Section for Individual Stock
+                st.write("### 🗓️ Historical Seasonality (10-Year Average)")
+                q_returns = engine.get_quarterly_returns()
+                if q_returns:
+                    q_df = pd.DataFrame({
+                        "Quarter": list(q_returns.keys()),
+                        "Avg Return %": list(q_returns.values())
+                    })
+                    
+                    # Rationale explanation
+                    best_q = max(q_returns, key=q_returns.get)
+                    st.write(f"This chart compares the average performance of **{ticker}** across all 4 quarters. "
+                             f"We highlight **{best_q}** because it has the highest historical average return of **{q_returns[best_q]}%** over the last decade.")
+                    
+                    # Bar Chart
+                    st.bar_chart(q_df.set_index("Quarter"))
+                else:
+                    st.write("Seasonality data not available.")
             else:
                 st.warning("Financial data not available for this ticker.")
 
@@ -293,14 +333,6 @@ if ticker:
         with tab6:
             st.subheader("🚀 High-Confidence Market Opportunities")
             st.info("The agent is currently screening the Top NSE stocks for immediate opportunities based on technical alignment.")
-            
-            # List of some liquid NSE tickers for screening
-            top_nse_tickers = [
-                "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "BHARTIARTL", 
-                "INFY", "ITC", "SBIN", "LICI", "HINDUNILVR", 
-                "LT", "BAJFINANCE", "HCLTECH", "MARUTI", "SUNPHARMA",
-                "ADANIENT", "KOTAKBANK", "TITAN", "AXISBANK", "ONGC"
-            ]
             
             if st.button("🔍 Run Multi-Stock Scanner"):
                 opps = {"buys": [], "sells": []}
@@ -378,6 +410,150 @@ if ticker:
                                 st.write(f"- {r}")
             else:
                 st.write("Click 'Run Multi-Stock Scanner' to find current opportunities in the market.")
+
+        with tab7:
+            st.subheader("💹 Smart Money Concept & Institutional Tracker")
+            st.info("Detecting institutional accumulation and large volume absorption across the market.")
+            
+            if st.button("🛰️ Run Smart Money Scanner"):
+                with st.spinner("Monitoring institutional footprints across NSE..."):
+                    try:
+                        all_tickers = list(nse_stocks_dict.values())
+                        sm_stocks = AnalysisEngine.get_smart_money_stocks(all_tickers)
+                        if sm_stocks:
+                            st.success(f"Found {len(sm_stocks)} stocks with institutional footprints.")
+                            st.dataframe(pd.DataFrame(sm_stocks), use_container_width=True)
+                        else:
+                            st.warning("No significant institutional activity detected.")
+                    except Exception as e:
+                        st.error(f"Scanner error: {str(e)}")
+
+        with tab8:
+            st.subheader("🎯 Swing Trading Scanner (15–20 Days)")
+            st.info("Scanning for stocks with EMA alignment, RSI momentum, and Volume surge.")
+            
+            if st.button("🔍 Run Swing Scanner"):
+                with st.spinner("Analyzing NSE market trends for high-quality Swing setups..."):
+                    try:
+                        all_tickers = list(nse_stocks_dict.values())
+                        swing_stocks = AnalysisEngine.get_swing_stocks(all_tickers)
+                        if swing_stocks:
+                            st.success(f"Found {len(swing_stocks)} high-quality swing candidates.")
+                            st.dataframe(pd.DataFrame(swing_stocks), use_container_width=True)
+                        else:
+                            st.warning("No high-quality bullish swing setups found at the moment.")
+                    except Exception as e:
+                        st.error(f"Scanner error: {str(e)}")
+
+        with tab9:
+            st.subheader("⏳ Long Term Investing")
+            st.info("Filtering for stocks with high growth, ROE, and low debt (Fundamental Strength).")
+            
+            if st.button("📈 Run Long-Term Scanner"):
+                with st.spinner("Evaluating NSE company fundamentals (this may take a moment)..."):
+                    try:
+                        all_tickers = list(nse_stocks_dict.values())
+                        lt_stocks = AnalysisEngine.get_long_term_stocks(all_tickers)
+                        if lt_stocks:
+                            st.success(f"Found {len(lt_stocks)} fundamentally strong companies.")
+                            st.dataframe(pd.DataFrame(lt_stocks), use_container_width=True)
+                        else:
+                            st.warning("No stocks met the strict fundamental criteria.")
+                    except Exception as e:
+                        st.error(f"Scanner error: {str(e)}")
+
+        with tab10:
+            st.subheader("🗓️ Cyclical Stocks by Quarter")
+            st.info("Stocks categorized by their historically best-performing quarter (10yr backtest).")
+            
+            if st.button("🗓️ Run Cyclical Scanner"):
+                with st.spinner("Calculating 10-year seasonal return probabilities for NSE stocks..."):
+                    try:
+                        all_tickers = list(nse_stocks_dict.values())
+                        cyclical_groups = AnalysisEngine.get_cyclical_stocks_by_quarter(all_tickers)
+                        
+                        total_found = sum(len(v) for v in cyclical_groups.values())
+                        st.success(f"Analyzed seasonal patterns. Found {total_found} historical outperformers.")
+                        
+                        sub_q1, sub_q2, sub_q3, sub_q4 = st.tabs(["Q1 Stocks", "Q2 Stocks", "Q3 Stocks", "Q4 Stocks"])
+                        
+                        with sub_q1:
+                            if cyclical_groups["Q1"]:
+                                st.dataframe(pd.DataFrame(cyclical_groups["Q1"]), use_container_width=True)
+                            else: st.info("No significant Q1 outperformers found in this sample.")
+                        with sub_q2:
+                            if cyclical_groups["Q2"]:
+                                st.dataframe(pd.DataFrame(cyclical_groups["Q2"]), use_container_width=True)
+                            else: st.info("No significant Q2 outperformers found in this sample.")
+                        with sub_q3:
+                            if cyclical_groups["Q3"]:
+                                st.dataframe(pd.DataFrame(cyclical_groups["Q3"]), use_container_width=True)
+                            else: st.info("No significant Q3 outperformers found in this sample.")
+                        with sub_q4:
+                            if cyclical_groups["Q4"]:
+                                st.dataframe(pd.DataFrame(cyclical_groups["Q4"]), use_container_width=True)
+                            else: st.info("No significant Q4 outperformers found in this sample.")
+                    except Exception as e:
+                        st.error(f"Scanner error: {str(e)}")
+
+        with tab11:
+            st.subheader("📌 Weinstein Stages & Minervini Checklist")
+            st.info("Institutional Stage Analysis following global standards.")
+            
+            stage_data = engine.get_stage_analysis()
+            if stage_data:
+                col1, col2 = st.columns([1, 1])
+                
+                with col1:
+                    # Minervini Template UI
+                    st.markdown("""
+                        <div style="background-color: #1e2130; color: white; padding: 10px; border-radius: 5px; font-weight: bold; margin-bottom: 15px;">
+                            📋 Mark Minervini Template
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
+                    for criteria, met in stage_data['minervini'].items():
+                        icon = "✅" if met else "❌"
+                        color = "#10b981" if met else "#ef4444"
+                        st.markdown(f"<p style='margin:0; font-size:16px;'>{icon} <span style='color:{color}'>{criteria}</span></p>", unsafe_allow_html=True)
+                    
+                with col2:
+                    # Weinstein Stage UI
+                    st.markdown(f"""
+                        <div style="background-color: #1e2130; color: white; padding: 10px; border-radius: 5px; font-weight: bold; margin-bottom: 15px;">
+                            📌 Stan Weinstein Stage Analysis
+                        </div>
+                        <div style="background-color: {stage_data['weinstein']['color']}; color: white; padding: 8px 15px; font-size: 18px; font-weight: bold; border-left: 5px solid white;">
+                            Current Stage: {stage_data['weinstein']['stage']}
+                        </div>
+                        <div style="background-color: #d1d5db33; padding: 5px 15px; margin-bottom: 20px; font-size: 14px;">
+                            Bars in Stage: {stage_data['weinstein']['bars']}
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # CPR Table
+                    st.markdown("""
+                        <table style="width:100%; border-collapse: collapse; border: 1px solid #374151; font-family: sans-serif;">
+                            <tr style="border: 1px solid #374151; background: #1e2130;">
+                                <td style="padding: 10px; font-weight: bold; color: white;">Metrics</td>
+                                <td style="padding: 10px; font-weight: bold; color: white;">Value</td>
+                            </tr>
+                            <tr style="border: 1px solid #374151;">
+                                <td style="padding: 10px; font-weight: bold;">CPR Width</td>
+                                <td style="padding: 10px;">""" + stage_data['cpr']['width'] + """</td>
+                            </tr>
+                            <tr style="border: 1px solid #374151;">
+                                <td style="padding: 10px; font-weight: bold;">CPR Type</td>
+                                <td style="padding: 10px;">""" + stage_data['cpr']['type'] + """</td>
+                            </tr>
+                            <tr style="border: 1px solid #374151;">
+                                <td style="padding: 10px; font-weight: bold;">IB (Range)</td>
+                                <td style="padding: 10px; color: #ef4444;">""" + str(stage_data['cpr']['range']) + """</td>
+                            </tr>
+                        </table>
+                    """, unsafe_allow_html=True)
+            else:
+                st.warning("Insufficient data for Stage Analysis.")
 
     except Exception as e:
         st.error(f"Error fetching data for {ticker}: {str(e)}")
