@@ -735,3 +735,43 @@ class AnalysisEngine:
             except Exception:
                 continue
         return results
+
+    @staticmethod
+    def get_weinstein_scanner_stocks(ticker_pool):
+        """Classifies the market into Stan Weinstein's 4 Stages."""
+        stages = {"Stage 1 - Basing": [], "Stage 2 - Advancing": [], "Stage 3 - Top": [], "Stage 4 - Declining": []}
+        pool = list(ticker_pool)
+        random.shuffle(pool)
+        for ticker in pool[:300]:
+            try:
+                full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
+                engine = AnalysisEngine(full_ticker, interval='1d', period='1y')
+                engine.add_indicators()
+                df = engine.data
+                if len(df) < 50: continue
+                
+                last = df.iloc[-1]
+                prev_10 = df.iloc[-10]
+                sma200 = last['SMA_200']
+                price = last['Close']
+                ma_rising = last['SMA_200'] > prev_10['SMA_200']
+                ma_falling = last['SMA_200'] < prev_10['SMA_200']
+                
+                stock_info = {
+                    "Stock Symbol": ticker,
+                    "Current Price": f"₹{price:.2f}",
+                    "Distance from SMA200": f"{((price-sma200)/sma200)*100:.1f}%",
+                    "RSI": round(last[engine.indicator_cols['rsi']], 1),
+                    "Phase": "Buy/Hold" if price > sma200 else "Avoid/Sell"
+                }
+
+                if price > sma200 and ma_rising:
+                    stages["Stage 2 - Advancing"].append(stock_info)
+                elif price < sma200 and ma_falling:
+                    stages["Stage 4 - Declining"].append(stock_info)
+                elif abs(price - sma200) / sma200 < 0.05:
+                    key = "Stage 1 - Basing" if ma_rising else "Stage 3 - Top"
+                    stages[key].append(stock_info)
+            except Exception:
+                continue
+        return stages

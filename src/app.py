@@ -500,60 +500,50 @@ if ticker:
             st.subheader("📌 Weinstein Stages & Minervini Checklist")
             st.info("Institutional Stage Analysis following global standards.")
             
+            # 1. Individual Analysis
+            st.markdown("### 🔍 Individual Stock Audit")
             stage_data = engine.get_stage_analysis()
             if stage_data:
                 col1, col2 = st.columns([1, 1])
-                
                 with col1:
-                    # Minervini Template UI
-                    st.markdown("""
-                        <div style="background-color: #1e2130; color: white; padding: 10px; border-radius: 5px; font-weight: bold; margin-bottom: 15px;">
-                            📋 Mark Minervini Template
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
+                    st.markdown("""<div style="background-color: #1e2130; color: white; padding: 10px; border-radius: 5px; font-weight: bold; margin-bottom: 15px;">📋 Mark Minervini Template</div>""", unsafe_allow_html=True)
                     for criteria, met in stage_data['minervini'].items():
-                        icon = "✅" if met else "❌"
-                        color = "#10b981" if met else "#ef4444"
+                        icon = "✅" if met else "❌"; color = "#10b981" if met else "#ef4444"
                         st.markdown(f"<p style='margin:0; font-size:16px;'>{icon} <span style='color:{color}'>{criteria}</span></p>", unsafe_allow_html=True)
-                    
                 with col2:
-                    # Weinstein Stage UI
-                    st.markdown(f"""
-                        <div style="background-color: #1e2130; color: white; padding: 10px; border-radius: 5px; font-weight: bold; margin-bottom: 15px;">
-                            📌 Stan Weinstein Stage Analysis
-                        </div>
-                        <div style="background-color: {stage_data['weinstein']['color']}; color: white; padding: 8px 15px; font-size: 18px; font-weight: bold; border-left: 5px solid white;">
-                            Current Stage: {stage_data['weinstein']['stage']}
-                        </div>
-                        <div style="background-color: #d1d5db33; padding: 5px 15px; margin-bottom: 20px; font-size: 14px;">
-                            Bars in Stage: {stage_data['weinstein']['bars']}
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # CPR Table
-                    st.markdown("""
-                        <table style="width:100%; border-collapse: collapse; border: 1px solid #374151; font-family: sans-serif;">
-                            <tr style="border: 1px solid #374151; background: #1e2130;">
-                                <td style="padding: 10px; font-weight: bold; color: white;">Metrics</td>
-                                <td style="padding: 10px; font-weight: bold; color: white;">Value</td>
-                            </tr>
-                            <tr style="border: 1px solid #374151;">
-                                <td style="padding: 10px; font-weight: bold;">CPR Width</td>
-                                <td style="padding: 10px;">""" + stage_data['cpr']['width'] + """</td>
-                            </tr>
-                            <tr style="border: 1px solid #374151;">
-                                <td style="padding: 10px; font-weight: bold;">CPR Type</td>
-                                <td style="padding: 10px;">""" + stage_data['cpr']['type'] + """</td>
-                            </tr>
-                            <tr style="border: 1px solid #374151;">
-                                <td style="padding: 10px; font-weight: bold;">IB (Range)</td>
-                                <td style="padding: 10px; color: #ef4444;">""" + str(stage_data['cpr']['range']) + """</td>
-                            </tr>
-                        </table>
-                    """, unsafe_allow_html=True)
+                    st.markdown(f"""<div style="background-color: #1e2130; color: white; padding: 10px; border-radius: 5px; font-weight: bold; margin-bottom: 15px;">📌 Stan Weinstein Stage Analysis</div><div style="background-color: {stage_data['weinstein']['color']}; color: white; padding: 8px 15px; font-size: 18px; font-weight: bold; border-left: 5px solid white;">Current Stage: {stage_data['weinstein']['stage']}</div><div style="background-color: #d1d5db33; padding: 5px 15px; margin-bottom: 20px; font-size: 14px;">Bars in Stage: {stage_data['weinstein']['bars']}</div>""", unsafe_allow_html=True)
+                    st.markdown("""<table style="width:100%; border-collapse: collapse; border: 1px solid #374151; font-family: sans-serif;"><tr style="border: 1px solid #374151; background: #1e2130;"><td style="padding: 10px; font-weight: bold; color: white;">Metrics</td><td style="padding: 10px; font-weight: bold; color: white;">Value</td></tr><tr style="border: 1px solid #374151;"><td style="padding: 10px; font-weight: bold;">CPR Width</td><td style="padding: 10px;">"""+stage_data['cpr']['width']+"""</td></tr><tr style="border: 1px solid #374151;"><td style="padding: 10px; font-weight: bold;">CPR Type</td><td style="padding: 10px;">"""+stage_data['cpr']['type']+"""</td></tr><tr style="border: 1px solid #374151;"><td style="padding: 10px; font-weight: bold;">IB (Range)</td><td style="padding: 10px; color: #ef4444;">"""+str(stage_data['cpr']['range'])+"""</td></tr></table>""", unsafe_allow_html=True)
             else:
                 st.warning("Insufficient data for Stage Analysis.")
+
+            st.markdown("---")
+            
+            # 2. Market-wide Scanner
+            st.markdown("### 🛰️ Weinstein Market-wide Scanner")
+            st.write("Scan the entire market to find stocks currently in specific stages.")
+            
+            if st.button("🚀 Run Stage Scanner"):
+                with st.spinner("Classifying market into Weinstein Stages (1-4)..."):
+                    try:
+                        all_tickers = list(nse_stocks_dict.values())
+                        stage_results = AnalysisEngine.get_weinstein_scanner_stocks(all_tickers)
+                        
+                        s_tabs = st.tabs(["🏗️ Stage 1 (Basing)", "🚀 Stage 2 (Advancing)", "📉 Stage 3 (Top Area)", "💀 Stage 4 (Declining)"])
+                        
+                        with s_tabs[0]:
+                            if stage_results["Stage 1 - Basing"]: st.dataframe(pd.DataFrame(stage_results["Stage 1 - Basing"]), use_container_width=True)
+                            else: st.info("No stocks currently in the basing stage.")
+                        with s_tabs[1]:
+                            if stage_results["Stage 2 - Advancing"]: st.dataframe(pd.DataFrame(stage_results["Stage 2 - Advancing"]), use_container_width=True)
+                            else: st.info("No stocks currently in the advancing stage.")
+                        with s_tabs[2]:
+                            if stage_results["Stage 3 - Top"]: st.dataframe(pd.DataFrame(stage_results["Stage 3 - Top"]), use_container_width=True)
+                            else: st.info("No stocks currently in the top/distribution stage.")
+                        with s_tabs[3]:
+                            if stage_results["Stage 4 - Declining"]: st.dataframe(pd.DataFrame(stage_results["Stage 4 - Declining"]), use_container_width=True)
+                            else: st.info("No stocks currently in the declining stage.")
+                    except Exception as e:
+                        st.error(f"Scanner error: {str(e)}")
 
     except Exception as e:
         st.error(f"Error fetching data for {ticker}: {str(e)}")
