@@ -614,7 +614,7 @@ class AnalysisEngine:
     # --- New Advanced Scanner Methods ---
 
     @staticmethod
-    def get_swing_stocks(ticker_pool, max_results=20, max_workers=10, progress_callback=None):
+    def get_swing_stocks(ticker_pool, interval='1d', period='1y', max_results=20, max_workers=10, progress_callback=None):
         """Scans for stocks suitable for 15-20 days swing trading using batch processing."""
         
         # Process full market pool
@@ -628,7 +628,7 @@ class AnalysisEngine:
                 progress_callback(i, len(pool), f"Batch {i//batch_size + 1}")
                 
             # Batch download data
-            batch_data = batch_download_data(batch, period='1y', interval='1d')
+            batch_data = batch_download_data(batch, period=period, interval=interval)
             
             # Process batch
             for ticker, df in batch_data.items():
@@ -648,19 +648,26 @@ class AnalysisEngine:
                     if df['Volume'].iloc[-1] <= df['Vol_SMA_20'].iloc[-1]: continue
                     if df['RSI_14'].iloc[-1] <= 50: continue
                     
-                    max_40 = df['High'].rolling(40).max().shift(1).iloc[-1]
+                    # EXACT CHARTINK LOGIC: price > max Close of last 40 days
+                    # Shift(1) to avoid comparing price with today's own close in the rolling max
+                    max_40_close = df['Close'].rolling(40).max().shift(1).iloc[-1]
                     
-                    if price > max_40:
+                    if price > max_40_close:
                         atr = ta.atr(df['High'], df['Low'], df['Close'], length=14).iloc[-1]
+                        # Calculate % Change for the "Buzzing" factor
+                        prev_close = df['Close'].iloc[-2]
+                        pct_change = ((price - prev_close) / prev_close) * 100
+                        
                         all_results.append({
                             "Stock Symbol": ticker,
                             "Current Price": f"₹{price:.2f}",
                             "Entry Range": f"₹{price:.2f} - ₹{price*1.01:.2f}",
                             "Target Price (15–20 day horizon)": f"₹{price + 2.5*atr:.2f}",
                             "Stop Loss": f"₹{price - 1.5*atr:.2f}",
-                            "Trend Type (Uptrend / Range Breakout)": "40-Day Breakout",
-                            "Technical Reason (short explanation)": "New high breakout confirmed by Volume & RSI.",
-                            "Confidence Score (0–100)": int(min(98, 70 + (df['RSI_14'].iloc[-1]-50)*1.8))
+                            "Trend Type (Uptrend / Range Breakout)": "40-Day Close Breakout",
+                            "Technical Reason (short explanation)": f"Breakout with {pct_change:.1f}% gain and Volume/RSI support.",
+                            "Confidence Score (0–100)": int(min(98, 70 + (df['RSI_14'].iloc[-1]-50)*1.8)),
+                            "pct_change": pct_change # Store for sorting
                         })
                 except Exception:
                     continue
@@ -669,8 +676,9 @@ class AnalysisEngine:
             if i + batch_size < len(pool):
                 time.sleep(3.0) # Increased to 3s for full-market swing scan stability
                     
-        # FINAL SORT: Ensure deterministic results
-        sorted_results = sorted(all_results, key=lambda x: (-x['Confidence Score (0–100)'], x['Stock Symbol']))
+        # FINAL SORT: Sort by % Change (Descending) to show "Buzzing" stocks first
+        # This matches the Chartink list which prioritizes the most active gainers
+        sorted_results = sorted(all_results, key=lambda x: (-x['pct_change'], x['Stock Symbol']))
         return sorted_results[:max_results]
 
     @staticmethod

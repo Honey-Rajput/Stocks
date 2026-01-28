@@ -236,20 +236,18 @@ def batch_download_data(tickers: List[str], period: str = '60d', interval: str =
     import pandas as pd
     import requests
     
-    if not tickers:
-        return {}
-        
-    # Create a session with a timeout to prevent infinite hangs
-    session = requests.Session()
-    session.headers.update({'User-Agent': 'Mozilla/5.0'})
-    
+    # Ensure deterministic processing by sorting tickers
+    tickers = sorted(list(set(tickers)))
     # Ensure all tickers have .NS suffix for NSE
     formatted_tickers = [f"{t}.NS" if not t.endswith(".NS") else t for t in tickers]
     
+    if not formatted_tickers:
+        return {}
+        
+    session = requests.Session()
+    session.headers.update({'User-Agent': 'Mozilla/5.0'})
+    
     try:
-        # Download all at once
-        # Using threads=False for stability on Windows/Streamlit during large batches
-        # yfinance doesn't directly support timeout in download, but the session helps
         data = yf.download(
             formatted_tickers, 
             period=period, 
@@ -257,31 +255,33 @@ def batch_download_data(tickers: List[str], period: str = '60d', interval: str =
             auto_adjust=True, 
             group_by='ticker',
             progress=False,
-            threads=False,
-            session=session
+            threads=True,
+            timeout=30 
         )
         
         results = {}
-        # Handle MultiIndex for multiple tickers
-        if len(formatted_tickers) > 1:
-            for t in formatted_tickers:
-                if t in data.columns.get_level_values(0):
-                    # Extract ticker-specific data from MultiIndex
-                    ticker_df = data[t].copy()
+        if data is None or data.empty:
+            return {}
+
+        # Standardize: Always treat as MultiIndex if possible, or handle single column
+        if isinstance(data.columns, pd.MultiIndex):
+            # Tickers are in the first level
+            for ticker_symbol in data.columns.get_level_values(0).unique():
+                ticker_df = data[ticker_symbol]
+                if isinstance(ticker_df, pd.DataFrame):
                     ticker_df = ticker_df.dropna(subset=['Close'])
                     if not ticker_df.empty:
-                        # Return with original ticker name as key
-                        orig_name = t.replace(".NS", "")
-                        results[orig_name] = ticker_df
+                        clean_name = str(ticker_symbol).replace(".NS", "")
+                        results[clean_name] = ticker_df
         else:
-            # Single ticker returns standard DataFrame (or 1-level MultiIndex)
-            if not data.empty:
-                # Some yfinance versions still return MultiIndex for 1 ticker
-                if isinstance(data.columns, pd.MultiIndex):
-                    data.columns = data.columns.get_level_values(1)
-                results[tickers[0].replace(".NS", "")] = data
+            # Single ticker, non-MultiIndex (happens with 1 ticker sometimes)
+            df = data.dropna(subset=['Close'])
+            if not df.empty:
+                # Use the first requested ticker as key
+                clean_name = formatted_tickers[0].replace(".NS", "")
+                results[clean_name] = df
                 
         return results
     except Exception as e:
-        print(f"Batch Download Error: {e}")
+        print(f"Internal Batch Error: {e}")
         return {}
