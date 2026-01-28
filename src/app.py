@@ -64,14 +64,17 @@ def get_nse_stocks():
         return {"RELIANCE - RELIANCE INDUSTRIES LTD": "RELIANCE"}
 
 def add_tradingview_column(results):
-    """Adds a clickable TradingView chart link to the results list."""
+    """Transforms the Symbol/ticker column into a TradingView URL."""
     if not results: return results
     for res in results:
-        symbol = res.get('Stock Symbol') or res.get('ticker')
+        # Check both possible keys
+        key = 'Stock Symbol' if 'Stock Symbol' in res else 'ticker'
+        symbol = res.get(key)
         if symbol:
             # Clean symbol (remove .NS if present for TV mapping)
-            clean_symbol = symbol.replace(".NS", "")
-            res['Chart 📈'] = f"https://www.tradingview.com/chart/?symbol=NSE:{clean_symbol}"
+            clean_symbol = str(symbol).replace(".NS", "")
+            # We transform the symbol itself into a URL for LinkColumn to pick up
+            res[key] = f"https://www.tradingview.com/chart/?symbol=NSE:{clean_symbol}"
     return results
 
 nse_stocks_dict = get_nse_stocks()
@@ -443,7 +446,10 @@ if ticker:
                             status_text.success(f"✅ Found {len(sm_stocks)} stocks with institutional footprints in {elapsed:.1f}s")
                             sm_stocks = add_tradingview_column(sm_stocks)
                             st.dataframe(pd.DataFrame(sm_stocks), 
-                                         column_config={"Chart 📈": st.column_config.LinkColumn("Chart 📈", display_text="Open Chart")},
+                                         column_config={
+                                             "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)"),
+                                             "Score": None # Hide sorting score
+                                         },
                                          use_container_width=True)
                         else:
                             status_text.warning("No significant institutional activity detected.")
@@ -487,7 +493,10 @@ if ticker:
                         if swing_stocks:
                             swing_stocks = add_tradingview_column(swing_stocks)
                             st.dataframe(pd.DataFrame(swing_stocks), 
-                                         column_config={"Chart 📈": st.column_config.LinkColumn("Chart 📈", display_text="Open Chart")},
+                                         column_config={
+                                             "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)"),
+                                             "pct_change": None # Hide sorting metric
+                                         },
                                          use_container_width=True)
                         else:
                             st.warning("No high-quality bullish swing setups found at the moment.")
@@ -517,7 +526,9 @@ if ticker:
                             status_text.success(f"✅ Found {len(lt_stocks)} fundamentally strong companies in {elapsed:.1f}s")
                             lt_stocks = add_tradingview_column(lt_stocks)
                             st.dataframe(pd.DataFrame(lt_stocks), 
-                                         column_config={"Chart 📈": st.column_config.LinkColumn("Chart 📈", display_text="Open Chart")},
+                                         column_config={
+                                             "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")
+                                         },
                                          use_container_width=True)
                         else:
                             status_text.warning("No stocks met the strict fundamental criteria.")
@@ -552,28 +563,28 @@ if ticker:
                             if cyclical_groups["Q1"]:
                                 q1 = add_tradingview_column(cyclical_groups["Q1"])
                                 st.dataframe(pd.DataFrame(q1), 
-                                             column_config={"Chart 📈": st.column_config.LinkColumn("Chart 📈", display_text="Open Chart")},
+                                             column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                              use_container_width=True)
                             else: st.info("No significant Q1 outperformers found in this sample.")
                         with sub_q2:
                             if cyclical_groups["Q2"]:
                                 q2 = add_tradingview_column(cyclical_groups["Q2"])
                                 st.dataframe(pd.DataFrame(q2), 
-                                             column_config={"Chart 📈": st.column_config.LinkColumn("Chart 📈", display_text="Open Chart")},
+                                             column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                              use_container_width=True)
                             else: st.info("No significant Q2 outperformers found in this sample.")
                         with sub_q3:
                             if cyclical_groups["Q3"]:
                                 q3 = add_tradingview_column(cyclical_groups["Q3"])
                                 st.dataframe(pd.DataFrame(q3), 
-                                             column_config={"Chart 📈": st.column_config.LinkColumn("Chart 📈", display_text="Open Chart")},
+                                             column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                              use_container_width=True)
                             else: st.info("No significant Q3 outperformers found in this sample.")
                         with sub_q4:
                             if cyclical_groups["Q4"]:
                                 q4 = add_tradingview_column(cyclical_groups["Q4"])
                                 st.dataframe(pd.DataFrame(q4), 
-                                             column_config={"Chart 📈": st.column_config.LinkColumn("Chart 📈", display_text="Open Chart")},
+                                             column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                              use_container_width=True)
                             else: st.info("No significant Q4 outperformers found in this sample.")
                     except Exception as e:
@@ -628,28 +639,28 @@ if ticker:
                             if stage_results["Stage 1 - Basing"]:
                                 s1 = add_tradingview_column(stage_results["Stage 1 - Basing"])
                                 st.dataframe(pd.DataFrame(s1), 
-                                             column_config={"Chart 📈": st.column_config.LinkColumn("Chart 📈", display_text="Open Chart")},
+                                             column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                              use_container_width=True)
                             else: st.info("No stocks currently in the basing stage.")
                         with s_tabs[1]:
                             if stage_results["Stage 2 - Advancing"]:
                                 s2 = add_tradingview_column(stage_results["Stage 2 - Advancing"])
                                 st.dataframe(pd.DataFrame(s2), 
-                                             column_config={"Chart 📈": st.column_config.LinkColumn("Chart 📈", display_text="Open Chart")},
+                                             column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                              use_container_width=True)
                             else: st.info("No stocks currently in the advancing stage.")
                         with s_tabs[2]:
                             if stage_results["Stage 3 - Top"]:
                                 s3 = add_tradingview_column(stage_results["Stage 3 - Top"])
                                 st.dataframe(pd.DataFrame(s3), 
-                                             column_config={"Chart 📈": st.column_config.LinkColumn("Chart 📈", display_text="Open Chart")},
+                                             column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                              use_container_width=True)
                             else: st.info("No stocks currently in the top/distribution stage.")
                         with s_tabs[3]:
                             if stage_results["Stage 4 - Declining"]:
                                 s4 = add_tradingview_column(stage_results["Stage 4 - Declining"])
                                 st.dataframe(pd.DataFrame(s4), 
-                                             column_config={"Chart 📈": st.column_config.LinkColumn("Chart 📈", display_text="Open Chart")},
+                                             column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                              use_container_width=True)
                             else: st.info("No stocks currently in the declining stage.")
                     except Exception as e:
