@@ -47,39 +47,8 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- JS for Keyboard Shortcuts ---
-# Fix: Ensure Ctrl+A, Backspace, and other editing keys work in all inputs
-st.components.v1.html(
-    """
-    <script>
-    const doc = window.parent.document;
-    
-    // Function to handle keydown events
-    const handleKeydown = (event) => {
-        const activeElement = doc.activeElement;
-        const isInput = activeElement.tagName === 'INPUT' || 
-                        activeElement.tagName === 'TEXTAREA' || 
-                        activeElement.isContentEditable;
-        
-        if (isInput) {
-            // list of keys we want to PROTECT from Streamlit's interception
-            const protectedKeys = ['a', 'A', 'x', 'X', 'c', 'C', 'v', 'V', 'z', 'Z'];
-            const isEditingShortcut = (event.ctrlKey || event.metaKey) && protectedKeys.includes(event.key);
-            const isNavigationKey = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key);
-
-            if (isEditingShortcut || isNavigationKey) {
-                // Stop Streamlit from intercepting this event by stopping it in the capture phase
-                event.stopImmediatePropagation();
-            }
-        }
-    };
-
-    // Add listener to the parent document in the capture phase (true)
-    doc.addEventListener('keydown', handleKeydown, true);
-    </script>
-    """,
-    height=0,
-)
+# --- App Configuration ---
+# UI and analysis settings for the Stock Market AI Agent.
 
 # Fetch NSE stock list
 @st.cache_data
@@ -116,7 +85,7 @@ ticker = f"{nse_stocks_dict[selected_stock_str]}.NS"
 
 timeframe = st.sidebar.selectbox("Timeframe", 
     options=["1m", "5m", "15m", "1h", "4h", "1d", "1wk", "1mo"],
-    index=3)
+    index=5) # Default to 1d
 
 # AI Configuration (Using st.secrets for GitHub safety)
 try:
