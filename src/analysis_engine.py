@@ -614,70 +614,89 @@ class AnalysisEngine:
     # --- New Advanced Scanner Methods ---
 
     @staticmethod
-    def get_swing_stocks(ticker_pool, interval='1d', period='1y', max_results=20, max_workers=10, progress_callback=None):
+    def _process_swing_stock(ticker, df):
+        """Helper to process a single stock's swing logic in parallel."""
+        try:
+            if len(df) < 50: # Reduced from 100 for better hit rate on shorter data
+                return None
+                
+            df = df.copy()
+            price = df['Close'].iloc[-1]
+            if price < 100:
+                return None
+                
+            # Calculations
+            df['EMA_20'] = ta.ema(df['Close'], length=20)
+            df['Vol_SMA_20'] = df['Volume'].rolling(window=20).mean()
+            df['RSI_14'] = ta.rsi(df['Close'], length=14)
+            
+            # Indicators are now computed, check the values
+            ema_val = df['EMA_20'].iloc[-1]
+            vol_sma_val = df['Vol_SMA_20'].iloc[-1]
+            rsi_val = df['RSI_14'].iloc[-1]
+            
+            if price <= ema_val: return None
+            if df['Volume'].iloc[-1] <= vol_sma_val: return None
+            if rsi_val <= 50: return None
+            
+            # 40-Day Close Breakout
+            max_40_close = df['Close'].rolling(40).max().shift(1).iloc[-1]
+            
+            if price > max_40_close:
+                atr = ta.atr(df['High'], df['Low'], df['Close'], length=14).iloc[-1]
+                prev_close = df['Close'].iloc[-2]
+                pct_change = ((price - prev_close) / prev_close) * 100
+                
+                return {
+                    "Stock Symbol": ticker,
+                    "Current Price": f"₹{price:.2f}",
+                    "Entry Range": f"₹{price:.2f} - ₹{price*1.01:.2f}",
+                    "Target Price (15–20 day horizon)": f"₹{price + 2.5*atr:.2f}",
+                    "Stop Loss": f"₹{price - 1.5*atr:.2f}",
+                    "Trend Type (Uptrend / Range Breakout)": "40-Day Close Breakout",
+                    "Technical Reason (short explanation)": f"Breakout with {pct_change:.1f}% gain and Volume/RSI support.",
+                    "Confidence Score (0–100)": int(min(98, 70 + (rsi_val-50)*1.8)),
+                    "pct_change": pct_change
+                }
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def get_swing_stocks(ticker_pool, interval='1d', period='1y', max_results=20, max_workers=20, progress_callback=None):
         """Scans for stocks suitable for 15-20 days swing trading using batch processing."""
         
         # Process full market pool
-        pool = list(ticker_pool)
+        from concurrent.futures import ThreadPoolExecutor
+        
+        # INCREASE BATCH SIZE: Optimization for performance
+        batch_size = 100 
         all_results = []
-        batch_size = 30
+        pool = list(ticker_pool)
         
         for i in range(0, len(pool), batch_size):
             batch = pool[i:i + batch_size]
             if progress_callback:
-                progress_callback(i, len(pool), f"Batch {i//batch_size + 1}")
-                
+                # App expects (current, total, ticker/msg)
+                progress_callback(i, len(pool), f"Batch {i//batch_size + 1}/{len(pool)//batch_size + 1}")
+            
             # Batch download data
             batch_data = batch_download_data(batch, period=period, interval=interval)
             
-            # Process batch
-            for ticker, df in batch_data.items():
-                try:
-                    if len(df) < 100: continue
-                    
-                    df = df.copy() # Avoid SettingWithCopyWarning
-                    price = df['Close'].iloc[-1]
-                    if price < 100: continue
-                    
-                    # Add indicators manually for speed on pre-fetched DF
-                    df['EMA_20'] = ta.ema(df['Close'], length=20)
-                    df['Vol_SMA_20'] = df['Volume'].rolling(window=20).mean()
-                    df['RSI_14'] = ta.rsi(df['Close'], length=14)
-                    
-                    if price <= df['EMA_20'].iloc[-1]: continue
-                    if df['Volume'].iloc[-1] <= df['Vol_SMA_20'].iloc[-1]: continue
-                    if df['RSI_14'].iloc[-1] <= 50: continue
-                    
-                    # EXACT CHARTINK LOGIC: price > max Close of last 40 days
-                    # Shift(1) to avoid comparing price with today's own close in the rolling max
-                    max_40_close = df['Close'].rolling(40).max().shift(1).iloc[-1]
-                    
-                    if price > max_40_close:
-                        atr = ta.atr(df['High'], df['Low'], df['Close'], length=14).iloc[-1]
-                        # Calculate % Change for the "Buzzing" factor
-                        prev_close = df['Close'].iloc[-2]
-                        pct_change = ((price - prev_close) / prev_close) * 100
-                        
-                        all_results.append({
-                            "Stock Symbol": ticker,
-                            "Current Price": f"₹{price:.2f}",
-                            "Entry Range": f"₹{price:.2f} - ₹{price*1.01:.2f}",
-                            "Target Price (15–20 day horizon)": f"₹{price + 2.5*atr:.2f}",
-                            "Stop Loss": f"₹{price - 1.5*atr:.2f}",
-                            "Trend Type (Uptrend / Range Breakout)": "40-Day Close Breakout",
-                            "Technical Reason (short explanation)": f"Breakout with {pct_change:.1f}% gain and Volume/RSI support.",
-                            "Confidence Score (0–100)": int(min(98, 70 + (df['RSI_14'].iloc[-1]-50)*1.8)),
-                            "pct_change": pct_change # Store for sorting
-                        })
-                except Exception:
-                    continue
+            # PARALLEL PROCESSING: Process all DataFrames in the batch at once
+            with ThreadPoolExecutor(max_workers=min(batch_size, 32)) as executor:
+                # Map processing function to all items in batch
+                futures = [executor.submit(AnalysisEngine._process_swing_stock, t, d) for t, d in batch_data.items()]
+                for future in futures:
+                    res = future.result()
+                    if res:
+                        all_results.append(res)
             
-            # Small delay to avoid rate limits
+            # REDUCED DELAY: Optimization for speed while remaining safe
             if i + batch_size < len(pool):
-                time.sleep(3.0) # Increased to 3s for full-market swing scan stability
+                time.sleep(0.7) 
                     
         # FINAL SORT: Sort by % Change (Descending) to show "Buzzing" stocks first
-        # This matches the Chartink list which prioritizes the most active gainers
         sorted_results = sorted(all_results, key=lambda x: (-x['pct_change'], x['Stock Symbol']))
         return sorted_results[:max_results]
 

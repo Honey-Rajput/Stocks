@@ -256,7 +256,7 @@ def batch_download_data(tickers: List[str], period: str = '60d', interval: str =
             group_by='ticker',
             progress=False,
             threads=True,
-            timeout=30 
+            timeout=40 
         )
         
         results = {}

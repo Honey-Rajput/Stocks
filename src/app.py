@@ -461,6 +461,8 @@ if ticker:
                         
                         swing_stocks = AnalysisEngine.get_swing_stocks(
                             all_tickers, 
+                            interval=timeframe,
+                            period=periods[timeframe],
                             max_results=20, 
                             max_workers=max_workers,
                             progress_callback=update_progress
