@@ -73,6 +73,11 @@ def get_nse_stocks():
     try:
         url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
         df = pd.read_csv(url)
+        
+        # Deduplicate by ISIN NUMBER to avoid phantom tickers like ALIVUS for ALKEM
+        # We keep the first occurrence as the primary symbol
+        df = df.drop_duplicates(subset=[' ISIN NUMBER'], keep='first')
+        
         # Create a dictionary of { "SYMBOL - NAME": "SYMBOL" }
         stocks = {f"{row['SYMBOL']} - {row['NAME OF COMPANY']}": row['SYMBOL'] for _, row in df.iterrows()}
         return stocks
@@ -118,8 +123,8 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("⚡ Scanner Settings")
 max_workers = st.sidebar.slider("Parallel Workers", min_value=5, max_value=20, value=10, 
                                  help="Higher = faster but may hit API limits")
-max_scan_stocks = st.sidebar.slider("Max Stocks to Scan", min_value=100, max_value=1000, value=500, step=100,
-                                     help="Limit stocks scanned for faster results")
+max_scan_stocks = st.sidebar.slider("Max Stocks to Scan", min_value=100, max_value=3000, value=2200, step=100,
+                                     help="Limit stocks scanned for faster results. Full NSE is ~2200 stocks.")
 
 # The nse_stocks_dict variable already contains the full live NSE list from EQUITY_L.csv
 # We will use this dynamically for all scanners.
@@ -474,7 +479,8 @@ if ticker:
                         swing_stocks = AnalysisEngine.get_swing_stocks(
                             all_tickers, 
                             max_results=20, 
-                            max_workers=max_workers
+                            max_workers=max_workers,
+                            progress_callback=update_progress
                         )
                         
                         elapsed = time.time() - start_time
@@ -525,7 +531,7 @@ if ticker:
                 
                 with st.spinner("Calculating 10-year seasonal return probabilities for NSE stocks..."):
                     try:
-                        all_tickers = list(nse_stocks_dict.values())[:200]  # Limit for this expensive scan
+                        all_tickers = list(nse_stocks_dict.values())[:max_scan_stocks]
                         cyclical_groups = AnalysisEngine.get_cyclical_stocks_by_quarter(
                             all_tickers,
                             max_results_per_quarter=15,
@@ -590,7 +596,7 @@ if ticker:
                 
                 with st.spinner("Classifying market into Weinstein Stages (1-4)..."):
                     try:
-                        all_tickers = list(nse_stocks_dict.values())[:100]  # Limit to 100 for stage analysis
+                        all_tickers = list(nse_stocks_dict.values())[:max_scan_stocks]
                         stage_results = AnalysisEngine.get_weinstein_scanner_stocks(
                             all_tickers,
                             max_workers=max_workers

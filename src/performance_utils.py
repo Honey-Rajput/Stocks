@@ -90,7 +90,7 @@ def parallel_process_stocks(
         
         # Process completed tasks
         completed = 0
-        for future in as_completed(future_to_ticker, timeout=timeout_per_stock * total):
+        for future in as_completed(future_to_ticker):
             ticker = future_to_ticker[future]
             completed += 1
             
@@ -228,3 +228,52 @@ def filter_by_market_cap(ticker_pool: List[str], min_market_cap: float = 0) -> L
     )
     
     return filtered
+def batch_download_data(tickers: List[str], period: str = '60d', interval: str = '1d') -> Dict[str, Any]:
+    """
+    Download data for multiple tickers in a single batch to improve performance.
+    """
+    import yfinance as yf
+    import pandas as pd
+    
+    if not tickers:
+        return {}
+        
+    # Ensure all tickers have .NS suffix for NSE
+    formatted_tickers = [f"{t}.NS" if not t.endswith(".NS") else t for t in tickers]
+    
+    try:
+        # Download all at once
+        data = yf.download(
+            formatted_tickers, 
+            period=period, 
+            interval=interval, 
+            auto_adjust=True, 
+            group_by='ticker',
+            progress=False,
+            threads=True
+        )
+        
+        results = {}
+        # Handle MultiIndex for multiple tickers
+        if len(formatted_tickers) > 1:
+            for t in formatted_tickers:
+                if t in data.columns.get_level_values(0):
+                    # Extract ticker-specific data from MultiIndex
+                    ticker_df = data[t].copy()
+                    ticker_df = ticker_df.dropna(subset=['Close'])
+                    if not ticker_df.empty:
+                        # Return with original ticker name as key
+                        orig_name = t.replace(".NS", "")
+                        results[orig_name] = ticker_df
+        else:
+            # Single ticker returns standard DataFrame (or 1-level MultiIndex)
+            if not data.empty:
+                # Some yfinance versions still return MultiIndex for 1 ticker
+                if isinstance(data.columns, pd.MultiIndex):
+                    data.columns = data.columns.get_level_values(1)
+                results[tickers[0].replace(".NS", "")] = data
+                
+        return results
+    except Exception as e:
+        print(f"Batch Download Error: {e}")
+        return {}
