@@ -5,7 +5,7 @@ import numpy as np
 import requests
 import json
 import time
-import random # Imported for ticker pool randomization to ensure broad market coverage
+from performance_utils import parallel_process_stocks, timed_cache, create_stock_processor
 
 # Analysis Engine for technical indicators and AI insights
 class AnalysisEngine:
@@ -545,47 +545,46 @@ class AnalysisEngine:
     # --- New Advanced Scanner Methods ---
 
     @staticmethod
-    def get_swing_stocks(ticker_pool):
+    def get_swing_stocks(ticker_pool, max_results=20, max_workers=10):
         """Scans for stocks suitable for 15-20 days swing trading based on breakout logic."""
-        results = []
-        pool = list(ticker_pool)
-        # Remove randomization to fix 'results changing every 2 min' issue
-        for ticker in pool:
+        
+        def analyze_swing_stock(ticker):
             try:
                 full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
                 t_obj = yf.Ticker(full_ticker)
                 
                 # Market Cap Filter: > 10,000 Cr (requested logic)
                 mcap = t_obj.info.get('marketCap', 0)
-                if mcap < 100_000_000_000: continue # 10k Cr
+                if mcap < 100_000_000_000: return None # 10k Cr
                 
-                engine = AnalysisEngine(full_ticker, interval='1d', period='1y')
+                # Reduced period from 1y to 60d for faster processing
+                engine = AnalysisEngine(full_ticker, interval='1d', period='60d')
                 engine.add_indicators()
                 df = engine.data
-                if len(df) < 50: continue
+                if len(df) < 50: return None
                 
                 last = df.iloc[-1]
                 price = last['Close']
                 
                 # Logic per Chartink Screenshot:
                 # 1. Price > 100
-                if price < 100: continue
+                if price < 100: return None
                 
                 # 2. Price > EMA 20
-                if price <= last['EMA_20']: continue
+                if price <= last['EMA_20']: return None
                 
                 # 3. Volume > SMA(Volume, 20)
-                if last['Volume'] <= last['Vol_SMA_20']: continue
+                if last['Volume'] <= last['Vol_SMA_20']: return None
                 
                 # 4. RSI(14) > 50
-                if last[engine.indicator_cols['rsi']] <= 50: continue
+                if last[engine.indicator_cols['rsi']] <= 50: return None
                 
                 # 5. Breakout: Close > Max(40, Daily Close).shift(1)
                 max_40 = df['High'].rolling(40).max().shift(1).iloc[-1]
                 
                 if price > max_40:
                     atr = df.ta.atr(length=14).iloc[-1]
-                    results.append({
+                    return {
                         "Stock Symbol": ticker,
                         "Current Price": f"₹{price:.2f}",
                         "Entry Range": f"₹{price:.2f} - ₹{price*1.01:.2f}",
@@ -594,18 +593,26 @@ class AnalysisEngine:
                         "Trend Type (Uptrend / Range Breakout)": "40-Day Breakout",
                         "Technical Reason (short explanation)": "New high breakout confirmed by Volume & RSI.",
                         "Confidence Score (0–100)": int(min(98, 70 + (last[engine.indicator_cols['rsi']]-50)*1.8))
-                    })
-                if len(results) >= 20: break
+                    }
+                return None
             except Exception:
-                continue
-        return results
+                return None
+        
+        # Use parallel processing
+        processor = create_stock_processor(analyze_swing_stock, result_limit=max_results)
+        results = parallel_process_stocks(
+            ticker_pool,
+            processor,
+            max_workers=max_workers,
+            max_stocks=500  # Limit initial pool for speed
+        )
+        return results[:max_results]
 
     @staticmethod
-    def get_long_term_stocks(ticker_pool):
+    def get_long_term_stocks(ticker_pool, max_results=20, max_workers=15):
         """Filters fundamentally strong stocks for long-term holding."""
-        results = []
-        pool = list(ticker_pool)
-        for ticker in pool:
+        
+        def analyze_fundamental_stock(ticker):
             try:
                 full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
                 t = yf.Ticker(full_ticker)
@@ -619,7 +626,7 @@ class AnalysisEngine:
                 market_cap = info.get('marketCap', 0) # Market Cap > 5000cr: Filter for Large/Quality Mid-cap stability
                 
                 if rev_growth > 0.1 and roe > 0.15 and debt_equity < 0.5 and market_cap > 50_000_000_000:
-                    results.append({
+                    return {
                         "Stock Symbol": ticker,
                         "Sector": info.get('sector', 'N/A'),
                         "Market Cap": f"₹{market_cap/1e7:.2f} Cr",
@@ -630,30 +637,40 @@ class AnalysisEngine:
                         "Long-Term Thesis (1–2 line summary)": "Compounder stock with strong moats and fiscal discipline.",
                         "Expected Holding Period (Years)": "3-5 Years",
                         "Risk Level (Low / Medium / High)": "Low" if debt_equity < 0.1 else "Medium"
-                    })
-                if len(results) >= 20: break
+                    }
+                return None
             except Exception:
-                continue
-        return results
+                return None
+        
+        # Use parallel processing - info fetching is fast
+        processor = create_stock_processor(analyze_fundamental_stock, result_limit=max_results)
+        results = parallel_process_stocks(
+            ticker_pool,
+            processor,
+            max_workers=max_workers,
+            max_stocks=800  # Check more stocks since it's just info fetching
+        )
+        return results[:max_results]
 
     @staticmethod
-    def get_cyclical_stocks_by_quarter(ticker_pool):
+    @timed_cache(seconds=600)  # Cache for 10 minutes - this is expensive
+    def get_cyclical_stocks_by_quarter(ticker_pool, max_results_per_quarter=15, max_workers=8):
         """Assigns stocks to quarters based on 10-year historical return seasonality."""
         quarterly_data = {"Q1": [], "Q2": [], "Q3": [], "Q4": []}
-        pool = list(ticker_pool)
-        for ticker in pool:
+        
+        def analyze_cyclical_stock(ticker):
             try:
                 full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
                 # 10y Monthly data: Chosen to filter out short-term anomalies and find long-term seasonal patterns
-                df = yf.download(full_ticker, period='10y', interval='1mo', auto_adjust=True)
-                if df.empty: continue
+                df = yf.download(full_ticker, period='10y', interval='1mo', auto_adjust=True, progress=False)
+                if df.empty: return None
                 if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
                 
                 df['Return'] = df['Close'].pct_change()
                 df['Quarter'] = df.index.quarter
                 # avg_quarterly_return: Mean return group by calendar quarter (Q1-Q4)
                 avg_returns = df.groupby('Quarter')['Return'].mean() * 100
-                if avg_returns.empty or avg_returns.isna().all(): continue
+                if avg_returns.empty or avg_returns.isna().all(): return None
                 
                 best_q = avg_returns.idxmax()
                 best_ret = avg_returns.max()
@@ -664,29 +681,49 @@ class AnalysisEngine:
                     months_map = {"Q1": "Jan-Mar", "Q2": "Apr-Jun", "Q3": "Jul-Sep", "Q4": "Oct-Dec"}
                     reasons_map = {"Q1": "Union Budget & Financial Year Closing", "Q2": "Monsoon Trends & Rural Demand", "Q3": "Festive Spending & Retail Sales", "Q4": "Year-end Capex & Holidays"}
                     
-                    quarterly_data[q_map[best_q]].append({
-                        "Stock Symbol": ticker,
-                        "Sector": "Nifty Core",
-                        "Best Performing Quarter (Q1/Q2/Q3/Q4)": q_map[best_q],
-                        "Average Return in that Quarter (%)": f"{best_ret:.1f}%",
-                        "Typical Months of Strength": months_map[q_map[best_q]],
-                        "Seasonal Reason (monsoon, budget, results, festivals, capex cycle, etc.)": reasons_map[q_map[best_q]]
-                    })
+                    return {
+                        "quarter": q_map[best_q],
+                        "data": {
+                            "Stock Symbol": ticker,
+                            "Sector": "Nifty Core",
+                            "Best Performing Quarter (Q1/Q2/Q3/Q4)": q_map[best_q],
+                            "Average Return in that Quarter (%)": f"{best_ret:.1f}%",
+                            "Typical Months of Strength": months_map[q_map[best_q]],
+                            "Seasonal Reason (monsoon, budget, results, festivals, capex cycle, etc.)": reasons_map[q_map[best_q]]
+                        }
+                    }
+                return None
             except Exception:
-                continue
+                return None
+        
+        # Use parallel processing with fewer workers (this is data-heavy)
+        results = parallel_process_stocks(
+            ticker_pool,
+            analyze_cyclical_stock,
+            max_workers=max_workers,
+            max_stocks=200,  # Limit to 200 stocks for this expensive operation
+            timeout_per_stock=45.0
+        )
+        
+        # Group results by quarter
+        for result in results:
+            if result:
+                quarter = result['quarter']
+                if len(quarterly_data[quarter]) < max_results_per_quarter:
+                    quarterly_data[quarter].append(result['data'])
+        
         return quarterly_data
 
     @staticmethod
-    def get_smart_money_stocks(ticker_pool):
+    def get_smart_money_stocks(ticker_pool, max_results=20, max_workers=12):
         """Finds stocks with institutional accumulation footprints (VSA logic)."""
-        results = []
-        pool = list(ticker_pool)
-        for ticker in pool:
+        
+        def analyze_smart_money(ticker):
             try:
                 full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
                 engine = AnalysisEngine(full_ticker, interval='1d', period='60d')
                 df = engine.data
-                if len(df) < 30: continue
+                if len(df) < 30: return None
                 
                 last = df.iloc[-1]
                 # SMA 20 Volume: Chosen as the standard benchmark for institutional volume participation
@@ -695,7 +732,7 @@ class AnalysisEngine:
                 
                 # vol_spike > 50%: Chosen as threshold identifying abnormal 'Big Player' buying or breakout absorption
                 if last['Close'] >= df['Close'].iloc[-2] and vol_spike > 50:
-                    results.append({
+                    return {
                         "Stock Symbol": ticker,
                         "Current Price": f"₹{last['Close']:.2f}",
                         "Signal Type (Accumulation / Breakout / Absorption / Re-accumulation)": "Accumulation" if vol_spike < 120 else "Institutional Breakout",
@@ -704,49 +741,69 @@ class AnalysisEngine:
                         "Institutional Activity (Yes/No + short note)": "Yes (Abnormal Volume detected)",
                         "Smart Money Score (0–100)": int(min(98, 55 + vol_spike/4)),
                         "Signal Strength (Weak / Moderate / Strong)": "Strong" if vol_spike > 150 else "Moderate"
-                    })
-                if len(results) >= 20: break
+                    }
+                return None
             except Exception:
-                continue
-        return results
+                return None
+        
+        # Use parallel processing
+        processor = create_stock_processor(analyze_smart_money, result_limit=max_results)
+        results = parallel_process_stocks(
+            ticker_pool,
+            processor,
+            max_workers=max_workers,
+            max_stocks=600
+        )
+        return results[:max_results]
 
     @staticmethod
-    def get_weinstein_scanner_stocks(ticker_pool):
+    def get_weinstein_scanner_stocks(ticker_pool, max_workers=10):
         """Deterministically classifies market into Weinstein Stages by Market Cap."""
         stages = {"Stage 1 - Basing": [], "Stage 2 - Advancing": [], "Stage 3 - Top": [], "Stage 4 - Declining": []}
-        # Use a localized NIFTY 100 or 200 list if possible for stability
-        # For now, we take a stable slice of the provided pool
-        pool = list(ticker_pool)
-        # No more random.shuffle(pool) - ensures results don't change every 2 min
         
-        count = 0
-        for ticker in pool:
-            if count >= 100: break # Limit for speed, but deterministic
+        def analyze_weinstein_stage(ticker):
             try:
                 full_ticker = f"{ticker}.NS"
-                engine = AnalysisEngine(full_ticker, interval='1d', period='2y')
+                # Reduced from 2y to 1y for faster processing
+                engine = AnalysisEngine(full_ticker, interval='1d', period='1y')
                 engine.add_indicators()
                 res = engine.get_stage_analysis()
-                if not res: continue
+                if not res: return None
                 
                 stage_info = res['weinstein']
                 data = {
                     "Stock Symbol": ticker,
                     "Price": f"₹{engine.data['Close'].iloc[-1]:.2f}",
                     "RS": stage_info['rs'],
-                    "Action": stage_info['action']
+                    "Action": stage_info['action'],
+                    "stage_key": None
                 }
                 
                 if "Stage 1" in stage_info['stage']:
-                    stages["Stage 1 - Basing"].append(data)
+                    data['stage_key'] = "Stage 1 - Basing"
                 elif "Stage 2" in stage_info['stage']:
-                    stages["Stage 2 - Advancing"].append(data)
+                    data['stage_key'] = "Stage 2 - Advancing"
                 elif "Stage 3" in stage_info['stage']:
-                    stages["Stage 3 - Top"].append(data)
+                    data['stage_key'] = "Stage 3 - Top"
                 elif "Stage 4" in stage_info['stage']:
-                    stages["Stage 4 - Declining"].append(data)
+                    data['stage_key'] = "Stage 4 - Declining"
                 
-                count += 1
+                return data if data['stage_key'] else None
             except Exception:
-                continue
+                return None
+        
+        # Use parallel processing
+        results = parallel_process_stocks(
+            ticker_pool,
+            analyze_weinstein_stage,
+            max_workers=max_workers,
+            max_stocks=100  # Limit for speed but deterministic
+        )
+        
+        # Group by stage
+        for result in results:
+            if result and result['stage_key']:
+                stage_key = result.pop('stage_key')
+                stages[stage_key].append(result)
+        
         return stages

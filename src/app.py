@@ -4,6 +4,7 @@ from plotly.subplots import make_subplots
 from analysis_engine import AnalysisEngine
 import pandas as pd
 from datetime import datetime
+import time
 
 # Page config
 st.set_page_config(page_title="Stock Market AI Agent", layout="wide", page_icon="📈")
@@ -111,8 +112,18 @@ st.sidebar.subheader("🤖 AI Intelligence")
 use_ai = st.sidebar.toggle("Enable AI Reasoning", value=True, help="Use custom LLM for advanced market commentary")
 selected_model = st.sidebar.selectbox("Select Model", 
     options=["gpt-5-nano-2025-08-07", "gpt-5-mini-2025-08-07", "gpt-4.1-nano", "gpt-4.1-mini", "gpt-oss-20b", "gpt-oss-120b"])
+
+# Scanner Performance Configuration
+st.sidebar.markdown("---")
+st.sidebar.subheader("⚡ Scanner Settings")
+max_workers = st.sidebar.slider("Parallel Workers", min_value=5, max_value=20, value=10, 
+                                 help="Higher = faster but may hit API limits")
+max_scan_stocks = st.sidebar.slider("Max Stocks to Scan", min_value=100, max_value=1000, value=500, step=100,
+                                     help="Limit stocks scanned for faster results")
+
 # The nse_stocks_dict variable already contains the full live NSE list from EQUITY_L.csv
 # We will use this dynamically for all scanners.
+
 
 # Periods for indicators
 periods = {
@@ -416,15 +427,25 @@ if ticker:
             st.info("Detecting institutional accumulation and large volume absorption across the market.")
             
             if st.button("🛰️ Run Smart Money Scanner"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                start_time = time.time()
+                
                 with st.spinner("Monitoring institutional footprints across NSE..."):
                     try:
-                        all_tickers = list(nse_stocks_dict.values())
-                        sm_stocks = AnalysisEngine.get_smart_money_stocks(all_tickers)
+                        all_tickers = list(nse_stocks_dict.values())[:max_scan_stocks]
+                        sm_stocks = AnalysisEngine.get_smart_money_stocks(
+                            all_tickers,
+                            max_results=20,
+                            max_workers=max_workers
+                        )
+                        
+                        elapsed = time.time() - start_time
                         if sm_stocks:
-                            st.success(f"Found {len(sm_stocks)} stocks with institutional footprints.")
+                            status_text.success(f"✅ Found {len(sm_stocks)} stocks with institutional footprints in {elapsed:.1f}s")
                             st.dataframe(pd.DataFrame(sm_stocks), use_container_width=True)
                         else:
-                            st.warning("No significant institutional activity detected.")
+                            status_text.warning("No significant institutional activity detected.")
                     except Exception as e:
                         st.error(f"Scanner error: {str(e)}")
 
@@ -433,12 +454,33 @@ if ticker:
             st.info("Scanning for stocks with EMA alignment, RSI momentum, and Volume surge.")
             
             if st.button("🔍 Run Swing Scanner"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                start_time = time.time()
+                
                 with st.spinner("Analyzing NSE market trends for high-quality Swing setups..."):
                     try:
-                        all_tickers = list(nse_stocks_dict.values())
-                        swing_stocks = AnalysisEngine.get_swing_stocks(all_tickers)
+                        all_tickers = list(nse_stocks_dict.values())[:max_scan_stocks]
+                        
+                        # Progress callback
+                        def update_progress(current, total, ticker):
+                            progress = current / total
+                            progress_bar.progress(progress)
+                            elapsed = time.time() - start_time
+                            rate = current / elapsed if elapsed > 0 else 0
+                            eta = (total - current) / rate if rate > 0 else 0
+                            status_text.text(f"Scanned {current}/{total} stocks ({rate:.1f} stocks/sec) - ETA: {eta:.0f}s - Last: {ticker}")
+                        
+                        swing_stocks = AnalysisEngine.get_swing_stocks(
+                            all_tickers, 
+                            max_results=20, 
+                            max_workers=max_workers
+                        )
+                        
+                        elapsed = time.time() - start_time
+                        status_text.success(f"✅ Scan complete in {elapsed:.1f}s! Found {len(swing_stocks)} high-quality swing candidates.")
+                        
                         if swing_stocks:
-                            st.success(f"Found {len(swing_stocks)} high-quality swing candidates.")
                             st.dataframe(pd.DataFrame(swing_stocks), use_container_width=True)
                         else:
                             st.warning("No high-quality bullish swing setups found at the moment.")
@@ -449,16 +491,26 @@ if ticker:
             st.subheader("⏳ Long Term Investing")
             st.info("Filtering for stocks with high growth, ROE, and low debt (Fundamental Strength).")
             
-            if st.button("📈 Run Long-Term Scanner"):
+            if st.button("📈 Run Long-Term Scanner", key="long_term_scanner"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                start_time = time.time()
+                
                 with st.spinner("Evaluating NSE company fundamentals (this may take a moment)..."):
                     try:
-                        all_tickers = list(nse_stocks_dict.values())
-                        lt_stocks = AnalysisEngine.get_long_term_stocks(all_tickers)
+                        all_tickers = list(nse_stocks_dict.values())[:max_scan_stocks]
+                        lt_stocks = AnalysisEngine.get_long_term_stocks(
+                            all_tickers,
+                            max_results=20,
+                            max_workers=max_workers
+                        )
+                        
+                        elapsed = time.time() - start_time
                         if lt_stocks:
-                            st.success(f"Found {len(lt_stocks)} fundamentally strong companies.")
+                            status_text.success(f"✅ Found {len(lt_stocks)} fundamentally strong companies in {elapsed:.1f}s")
                             st.dataframe(pd.DataFrame(lt_stocks), use_container_width=True)
                         else:
-                            st.warning("No stocks met the strict fundamental criteria.")
+                            status_text.warning("No stocks met the strict fundamental criteria.")
                     except Exception as e:
                         st.error(f"Scanner error: {str(e)}")
 
@@ -467,13 +519,22 @@ if ticker:
             st.info("Stocks categorized by their historically best-performing quarter (10yr backtest).")
             
             if st.button("🗓️ Run Cyclical Scanner"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                start_time = time.time()
+                
                 with st.spinner("Calculating 10-year seasonal return probabilities for NSE stocks..."):
                     try:
-                        all_tickers = list(nse_stocks_dict.values())
-                        cyclical_groups = AnalysisEngine.get_cyclical_stocks_by_quarter(all_tickers)
+                        all_tickers = list(nse_stocks_dict.values())[:200]  # Limit for this expensive scan
+                        cyclical_groups = AnalysisEngine.get_cyclical_stocks_by_quarter(
+                            all_tickers,
+                            max_results_per_quarter=15,
+                            max_workers=8  # Lower workers for data-heavy operation
+                        )
                         
+                        elapsed = time.time() - start_time
                         total_found = sum(len(v) for v in cyclical_groups.values())
-                        st.success(f"Analyzed seasonal patterns. Found {total_found} historical outperformers.")
+                        status_text.success(f"✅ Analyzed seasonal patterns in {elapsed:.1f}s. Found {total_found} historical outperformers.")
                         
                         sub_q1, sub_q2, sub_q3, sub_q4 = st.tabs(["Q1 Stocks", "Q2 Stocks", "Q3 Stocks", "Q4 Stocks"])
                         
@@ -523,10 +584,21 @@ if ticker:
             st.write("Scan the entire market to find stocks currently in specific stages.")
             
             if st.button("🚀 Run Stage Scanner"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                start_time = time.time()
+                
                 with st.spinner("Classifying market into Weinstein Stages (1-4)..."):
                     try:
-                        all_tickers = list(nse_stocks_dict.values())
-                        stage_results = AnalysisEngine.get_weinstein_scanner_stocks(all_tickers)
+                        all_tickers = list(nse_stocks_dict.values())[:100]  # Limit to 100 for stage analysis
+                        stage_results = AnalysisEngine.get_weinstein_scanner_stocks(
+                            all_tickers,
+                            max_workers=max_workers
+                        )
+                        
+                        elapsed = time.time() - start_time
+                        total_found = sum(len(v) for v in stage_results.values())
+                        status_text.success(f"✅ Stage classification complete in {elapsed:.1f}s. Found {total_found} stocks.")
                         
                         s_tabs = st.tabs(["🏗️ Stage 1", "🚀 Stage 2", "📉 Stage 3", "💀 Stage 4"])
                         
