@@ -343,9 +343,9 @@ class AnalysisEngine:
                 except Exception:
                     continue
             
-            # Rate limit protection
+            # Rate limit protection - More conservative for batch processing
             if i + batch_size < len(pool):
-                time.sleep(1.0)
+                time.sleep(2.5)
                 
         # Sort by confidence
         opportunities["buys"] = sorted(opportunities["buys"], key=lambda x: x['confidence'], reverse=True)
@@ -667,7 +667,7 @@ class AnalysisEngine:
             
             # Small delay to avoid rate limits
             if i + batch_size < len(pool):
-                time.sleep(1.5)
+                time.sleep(3.0) # Increased to 3s for full-market swing scan stability
                     
         # FINAL SORT: Ensure deterministic results
         sorted_results = sorted(all_results, key=lambda x: (-x['Confidence Score (0–100)'], x['Stock Symbol']))
@@ -766,7 +766,7 @@ class AnalysisEngine:
             
             # Rate limit protection
             if i + batch_size < len(pool):
-                time.sleep(1.2)
+                time.sleep(2.5)
         
         return quarterly_data
 
@@ -819,7 +819,7 @@ class AnalysisEngine:
             
             # Small delay to avoid rate limits
             if i + batch_size < len(pool):
-                time.sleep(1.2)
+                time.sleep(2.5)
         
         # FINAL SORT: Deterministic results
         sorted_results = sorted(all_results, key=lambda x: (-x['Smart Money Score (0–100)'], x['Stock Symbol']))
@@ -865,7 +865,7 @@ class AnalysisEngine:
             
             # Rate limit protection
             if i + batch_size < len(pool):
-                time.sleep(1.2)
+                time.sleep(2.5)
         
         # Sort results in each stage for deterministic output
         for k in stages:

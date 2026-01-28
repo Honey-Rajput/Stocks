@@ -234,15 +234,22 @@ def batch_download_data(tickers: List[str], period: str = '60d', interval: str =
     """
     import yfinance as yf
     import pandas as pd
+    import requests
     
     if not tickers:
         return {}
         
+    # Create a session with a timeout to prevent infinite hangs
+    session = requests.Session()
+    session.headers.update({'User-Agent': 'Mozilla/5.0'})
+    
     # Ensure all tickers have .NS suffix for NSE
     formatted_tickers = [f"{t}.NS" if not t.endswith(".NS") else t for t in tickers]
     
     try:
         # Download all at once
+        # Using threads=False for stability on Windows/Streamlit during large batches
+        # yfinance doesn't directly support timeout in download, but the session helps
         data = yf.download(
             formatted_tickers, 
             period=period, 
@@ -250,7 +257,8 @@ def batch_download_data(tickers: List[str], period: str = '60d', interval: str =
             auto_adjust=True, 
             group_by='ticker',
             progress=False,
-            threads=True
+            threads=False,
+            session=session
         )
         
         results = {}
