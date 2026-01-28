@@ -309,43 +309,54 @@ class AnalysisEngine:
         }
 
     @staticmethod
+    def _process_opportunity_stock(ticker, df, interval):
+        """Helper to process a single stock opportunity in parallel."""
+        try:
+            if df.empty: return None
+            engine = AnalysisEngine(f"{ticker}.NS", interval=interval)
+            engine.data = df.copy()
+            engine.add_indicators()
+            analysis = engine.analyze()
+            
+            if analysis['confidence'] >= 70:
+                return {
+                    "ticker": ticker,
+                    "price": analysis['price'],
+                    "confidence": analysis['confidence'],
+                    "bias": analysis['bias']
+                }
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
     def get_market_opportunities(ticker_list, interval='1d'):
         """Scans for best buy/sell opportunities across a list using batch processing."""
+        from concurrent.futures import ThreadPoolExecutor
         opportunities = {"buys": [], "sells": []}
         
-        # Process in batches of 30
-        pool = list(ticker_list)[:500] # Increased limit for better overview coverage
-        batch_size = 30
+        # INCREASE BATCH SIZE: Optimization for performance
+        pool = list(ticker_list)[:1000] # Increased limit for better coverage
+        batch_size = 100
         
         for i in range(0, len(pool), batch_size):
             batch = pool[i:i + batch_size]
             batch_data = batch_download_data(batch, period='60d', interval=interval)
             
-            for ticker, df in batch_data.items():
-                try:
-                    if df.empty: continue
-                    engine = AnalysisEngine(f"{ticker}.NS", interval=interval)
-                    engine.data = df.copy()
-                    engine.add_indicators()
-                    analysis = engine.analyze()
-                    
-                    if analysis['confidence'] >= 70:
-                        stock_data = {
-                            "ticker": ticker,
-                            "price": analysis['price'],
-                            "confidence": analysis['confidence'],
-                            "bias": analysis['bias']
-                        }
-                        if analysis['bias'] == "Bullish":
-                            opportunities["buys"].append(stock_data)
-                        elif analysis['bias'] == "Bearish":
-                            opportunities["sells"].append(stock_data)
-                except Exception:
-                    continue
+            # PARALLEL PROCESSING: Process all DataFrames in the batch
+            with ThreadPoolExecutor(max_workers=min(batch_size, 32)) as executor:
+                futures = [executor.submit(AnalysisEngine._process_opportunity_stock, t, d, interval) for t, d in batch_data.items()]
+                for future in futures:
+                    res = future.result()
+                    if res:
+                        if res['bias'] == "Bullish":
+                            opportunities["buys"].append(res)
+                        elif res['bias'] == "Bearish":
+                            opportunities["sells"].append(res)
             
-            # Rate limit protection - More conservative for batch processing
+            # REDUCED DELAY: Optimization for speed
             if i + batch_size < len(pool):
-                time.sleep(2.5)
+                time.sleep(0.7)
                 
         # Sort by confidence
         opportunities["buys"] = sorted(opportunities["buys"], key=lambda x: x['confidence'], reverse=True)
@@ -748,151 +759,192 @@ class AnalysisEngine:
         return results[:max_results]
 
     @staticmethod
+    def _process_cyclical_stock(ticker, df):
+        """Helper to process a single stock's seasonality in parallel."""
+        try:
+            df = df.copy()
+            if df.empty: return None
+            
+            df['Return'] = df['Close'].pct_change()
+            df['Quarter'] = df.index.quarter
+            avg_returns = df.groupby('Quarter')['Return'].mean() * 100
+            if avg_returns.empty or avg_returns.isna().all(): return None
+            
+            best_q = avg_returns.idxmax()
+            best_ret = avg_returns.max()
+            
+            if best_ret > 1.0: 
+                q_map = {1: "Q1", 2: "Q2", 3: "Q3", 4: "Q4"}
+                months_map = {"Q1": "Jan-Mar", "Q2": "Apr-Jun", "Q3": "Jul-Sep", "Q4": "Oct-Dec"}
+                reasons_map = {"Q1": "Union Budget & Financial Year Closing", "Q2": "Monsoon Trends & Rural Demand", "Q3": "Festive Spending & Retail Sales", "Q4": "Year-end Capex & Holidays"}
+                
+                return {
+                    "Stock Symbol": ticker,
+                    "Sector": "Nifty Core",
+                    "Quarter": q_map[best_q],
+                    "Best Performing Quarter (Q1/Q2/Q3/Q4)": q_map[best_q],
+                    "Average Return in that Quarter (%)": f"{best_ret:.1f}%",
+                    "Strong Months": months_map[q_map[best_q]],
+                    "Historical Catalyst (Reason for movement)": reasons_map[q_map[best_q]],
+                    "Investment Logic (why buy)": f"Consistently outperforms in {q_map[best_q]} due to seasonal patterns.",
+                    "Score": best_ret # For sorting
+                }
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
     @timed_cache(seconds=600)  # Cache for 10 minutes - this is expensive
     def get_cyclical_stocks_by_quarter(ticker_pool, max_results_per_quarter=15, max_workers=8):
         """Assigns stocks to quarters based on 10-year historical return seasonality using batch processing."""
+        from concurrent.futures import ThreadPoolExecutor
         quarterly_data = {"Q1": [], "Q2": [], "Q3": [], "Q4": []}
         pool = list(ticker_pool)
-        batch_size = 20 # Smaller batch for 10y monthly data
+        batch_size = 50 # Moderate batch for 10y monthly data
         
         for i in range(0, len(pool), batch_size):
             batch = pool[i:i + batch_size]
-            # 10y Monthly data for seasonality
             batch_data = batch_download_data(batch, period='10y', interval='1mo')
             
-            for ticker, df in batch_data.items():
-                try:
-                    df = df.copy()
-                    if df.empty: continue
-                    
-                    df['Return'] = df['Close'].pct_change()
-                    df['Quarter'] = df.index.quarter
-                    avg_returns = df.groupby('Quarter')['Return'].mean() * 100
-                    if avg_returns.empty or avg_returns.isna().all(): continue
-                    
-                    best_q = avg_returns.idxmax()
-                    best_ret = avg_returns.max()
-                    
-                    if best_ret > 1.0: 
-                        q_map = {1: "Q1", 2: "Q2", 3: "Q3", 4: "Q4"}
-                        months_map = {"Q1": "Jan-Mar", "Q2": "Apr-Jun", "Q3": "Jul-Sep", "Q4": "Oct-Dec"}
-                        reasons_map = {"Q1": "Union Budget & Financial Year Closing", "Q2": "Monsoon Trends & Rural Demand", "Q3": "Festive Spending & Retail Sales", "Q4": "Year-end Capex & Holidays"}
-                        
-                        quarter = q_map[best_q]
-                        if len(quarterly_data[quarter]) < max_results_per_quarter:
-                            quarterly_data[quarter].append({
-                                "Stock Symbol": ticker,
-                                "Sector": "Nifty Core",
-                                "Best Performing Quarter (Q1/Q2/Q3/Q4)": q_map[best_q],
-                                "Average Return in that Quarter (%)": f"{best_ret:.1f}%",
-                                "Typical Months of Strength": months_map[q_map[best_q]],
-                                "Seasonal Reason (monsoon, budget, results, festivals, capex cycle, etc.)": reasons_map[q_map[best_q]]
-                            })
-                except Exception:
-                    continue
+            # PARALLEL PROCESSING
+            with ThreadPoolExecutor(max_workers=min(batch_size, 20)) as executor:
+                futures = [executor.submit(AnalysisEngine._process_cyclical_stock, t, d) for t, d in batch_data.items()]
+                for future in futures:
+                    res = future.result()
+                    if res:
+                        q = res['Quarter']
+                        if len(quarterly_data[q]) < max_results_per_quarter:
+                            del res['Quarter'] # Cleanup
+                            del res['Score']
+                            quarterly_data[q].append(res)
             
-            # Rate limit protection
+            # REDUCED DELAY
             if i + batch_size < len(pool):
-                time.sleep(2.5)
-        
+                time.sleep(0.7)
         return quarterly_data
+
+    @staticmethod
+    def _process_smc_stock(ticker, df):
+        """Helper to process a single stock's SMC logic in parallel."""
+        try:
+            if len(df) < 100: return None
+            
+            last = df.iloc[-1]
+            prev = df.iloc[-2]
+            
+            # SMA 20 Volume
+            avg_vol = df['Volume'].rolling(20).mean().iloc[-1]
+            vol_spike = (last['Volume'] / avg_vol) * 100 - 100 
+            
+            # VSA: Spread analysis
+            spread = last['High'] - last['Low']
+            avg_spread = (df['High'] - df['Low']).rolling(20).mean().iloc[-1]
+            
+            # Condition: Bullish price action + Abnormal Volume
+            if last['Close'] >= prev['Close'] and vol_spike > 50:
+                signal = "Institutional Breakout"
+                if spread < avg_spread * 0.8:
+                    signal = "Absorption / Re-accumulation"
+                elif vol_spike > 200:
+                    signal = "Ultra-High Volume Breakout"
+                    
+                return {
+                    "Stock Symbol": ticker,
+                    "Current Price": f"₹{last['Close']:.2f}",
+                    "Signal Type (Accumulation / Breakout / Absorption / Re-accumulation)": signal,
+                    "Volume Spike %": f"{vol_spike:.1f}%",
+                    "Delivery %": "85% (Est)", 
+                    "Institutional Activity (Yes/No + short note)": "Yes (Abnormal Volume detected)",
+                    "Smart Money Score (0–100)": int(min(98, 55 + vol_spike/4)),
+                    "Signal Strength (Weak / Moderate / Strong)": "Strong" if vol_spike > 150 else "Moderate",
+                    "Score": int(min(98, 55 + vol_spike/4)) # Store for sorting
+                }
+        except Exception:
+            pass
+        return None
 
     @staticmethod
     def get_smart_money_stocks(ticker_pool, max_results=20, max_workers=12):
         """Finds stocks with institutional accumulation footprints (VSA logic) using batch processing."""
+        from concurrent.futures import ThreadPoolExecutor
         pool = list(ticker_pool)
         all_results = []
-        batch_size = 50
+        batch_size = 100
         
         for i in range(0, len(pool), batch_size):
             batch = pool[i:i + batch_size]
             batch_data = batch_download_data(batch, period='1y', interval='1d')
             
-            for ticker, df in batch_data.items():
-                try:
-                    if len(df) < 100: continue
-                    
-                    last = df.iloc[-1]
-                    prev = df.iloc[-2]
-                    
-                    # SMA 20 Volume
-                    avg_vol = df['Volume'].rolling(20).mean().iloc[-1]
-                    vol_spike = (last['Volume'] / avg_vol) * 100 - 100 
-                    
-                    # VSA: Spread analysis
-                    spread = last['High'] - last['Low']
-                    avg_spread = (df['High'] - df['Low']).rolling(20).mean().iloc[-1]
-                    
-                    # Condition: Bullish price action + Abnormal Volume
-                    if last['Close'] >= prev['Close'] and vol_spike > 50:
-                        signal = "Institutional Breakout"
-                        if spread < avg_spread * 0.8:
-                            signal = "Absorption / Re-accumulation"
-                        elif vol_spike > 200:
-                            signal = "Ultra-High Volume Breakout"
-                            
-                        all_results.append({
-                            "Stock Symbol": ticker,
-                            "Current Price": f"₹{last['Close']:.2f}",
-                            "Signal Type (Accumulation / Breakout / Absorption / Re-accumulation)": signal,
-                            "Volume Spike %": f"{vol_spike:.1f}%",
-                            "Delivery %": "85% (Est)", 
-                            "Institutional Activity (Yes/No + short note)": "Yes (Abnormal Volume detected)",
-                            "Smart Money Score (0–100)": int(min(98, 55 + vol_spike/4)),
-                            "Signal Strength (Weak / Moderate / Strong)": "Strong" if vol_spike > 150 else "Moderate"
-                        })
-                except Exception:
-                    continue
+            # PARALLEL PROCESSING
+            with ThreadPoolExecutor(max_workers=min(batch_size, 32)) as executor:
+                futures = [executor.submit(AnalysisEngine._process_smc_stock, t, d) for t, d in batch_data.items()]
+                for future in futures:
+                    res = future.result()
+                    if res:
+                        all_results.append(res)
             
-            # Small delay to avoid rate limits
+            # REDUCED DELAY
             if i + batch_size < len(pool):
-                time.sleep(2.5)
+                time.sleep(0.7)
         
         # FINAL SORT: Deterministic results
-        sorted_results = sorted(all_results, key=lambda x: (-x['Smart Money Score (0–100)'], x['Stock Symbol']))
+        sorted_results = sorted(all_results, key=lambda x: (-x['Score'], x['Stock Symbol']))
         return sorted_results[:max_results]
+
+    @staticmethod
+    def _process_weinstein_stage_stock(ticker, df):
+        """Helper to process a single stock's Weinstein Stage analysis in parallel."""
+        try:
+            if len(df) < 150: return None
+            
+            engine = AnalysisEngine(f"{ticker}.NS", interval='1d')
+            engine.data = df.copy()
+            engine.add_indicators()
+            res = engine.get_stage_analysis()
+            
+            if res:
+                stage_info = res['weinstein']
+                return {
+                    "Stock Symbol": ticker,
+                    "Price": f"₹{df['Close'].iloc[-1]:.2f}",
+                    "RS": stage_info['rs'],
+                    "Action": stage_info['action'],
+                    "Stage": stage_info['stage']
+                }
+        except Exception:
+            pass
+        return None
 
     @staticmethod
     def get_weinstein_scanner_stocks(ticker_pool, max_workers=10):
         """Deterministically classifies market into Weinstein Stages by Market Cap using batch processing."""
         stages = {"Stage 1 - Basing": [], "Stage 2 - Advancing": [], "Stage 3 - Top": [], "Stage 4 - Declining": []}
+        from concurrent.futures import ThreadPoolExecutor
+        stages = {"Stage 1 - Basing": [], "Stage 2 - Advancing": [], "Stage 3 - Top": [], "Stage 4 - Declining": []}
         pool = list(ticker_pool)
-        batch_size = 30
+        batch_size = 100
         
         for i in range(0, len(pool), batch_size):
             batch = pool[i:i + batch_size]
             batch_data = batch_download_data(batch, period='1y', interval='1d')
             
-            for ticker, df in batch_data.items():
-                try:
-                    if len(df) < 150: continue # Need enough for 30-week MA (approx 150 trading days)
-                    
-                    # Create temporary engine instance for analysis logic
-                    engine = AnalysisEngine(f"{ticker}.NS", interval='1d')
-                    engine.data = df.copy()
-                    engine.add_indicators()
-                    res = engine.get_stage_analysis()
-                    
+            # PARALLEL PROCESSING
+            with ThreadPoolExecutor(max_workers=min(batch_size, 32)) as executor:
+                futures = [executor.submit(AnalysisEngine._process_weinstein_stage_stock, t, d) for t, d in batch_data.items()]
+                for future in futures:
+                    res = future.result()
                     if res:
-                        stage_info = res['weinstein']
-                        data = {
-                            "Stock Symbol": ticker,
-                            "Price": f"₹{df['Close'].iloc[-1]:.2f}",
-                            "RS": stage_info['rs'],
-                            "Action": stage_info['action']
-                        }
-                        
+                        stage_name = res['Stage']
+                        del res['Stage']
                         # Match stage name to dictionary key
                         for k in stages.keys():
-                            if k.split(" - ")[0] in stage_info['stage']:
-                                stages[k].append(data)
+                            if k.split(" - ")[0] in stage_name:
+                                stages[k].append(res)
                                 break
-                except Exception:
-                    continue
             
-            # Rate limit protection
+            # REDUCED DELAY
             if i + batch_size < len(pool):
-                time.sleep(2.5)
+                time.sleep(0.7)
         
         # Sort results in each stage for deterministic output
         for k in stages:
