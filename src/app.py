@@ -48,20 +48,34 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- JS for Keyboard Shortcuts ---
-# Fix: Ensure Ctrl+A / Cmd+A works in selectbox and other inputs
+# Fix: Ensure Ctrl+A, Backspace, and other editing keys work in all inputs
 st.components.v1.html(
     """
     <script>
     const doc = window.parent.document;
-    doc.addEventListener('keydown', function(event) {
-        if ((event.ctrlKey || event.metaKey) && (event.key === 'a' || event.key === 'A')) {
-            const activeElement = doc.activeElement;
-            if (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA') {
-                // Stop Streamlit from intercepting this event
+    
+    // Function to handle keydown events
+    const handleKeydown = (event) => {
+        const activeElement = doc.activeElement;
+        const isInput = activeElement.tagName === 'INPUT' || 
+                        activeElement.tagName === 'TEXTAREA' || 
+                        activeElement.isContentEditable;
+        
+        if (isInput) {
+            // list of keys we want to PROTECT from Streamlit's interception
+            const protectedKeys = ['a', 'A', 'x', 'X', 'c', 'C', 'v', 'V', 'z', 'Z'];
+            const isEditingShortcut = (event.ctrlKey || event.metaKey) && protectedKeys.includes(event.key);
+            const isNavigationKey = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key);
+
+            if (isEditingShortcut || isNavigationKey) {
+                // Stop Streamlit from intercepting this event by stopping it in the capture phase
                 event.stopImmediatePropagation();
             }
         }
-    }, true);
+    };
+
+    // Add listener to the parent document in the capture phase (true)
+    doc.addEventListener('keydown', handleKeydown, true);
     </script>
     """,
     height=0,
