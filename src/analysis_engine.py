@@ -59,30 +59,39 @@ class AnalysisEngine:
         self.data = self._fetch_data()
         
     def _fetch_data(self):
-        # Using auto_adjust=True for cleaner technical analysis data
-        # Implement retry logic to handle transient yfinance failures
+        # Handle unsupported 4h interval by fetching 1h data for resampling
+        fetch_interval = self.interval
+        fetch_period = self.period
+        
+        if self.interval == '4h':
+            fetch_interval = '1h'
+            # yfinance limits 1h data to 730 days
+            if fetch_period == 'max':
+                fetch_period = '730d'
+        
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                df = yf.download(self.ticker, period=self.period, interval=self.interval, auto_adjust=True)
+                df = yf.download(self.ticker, period=fetch_period, interval=fetch_interval, auto_adjust=True, progress=False)
                 if not df.empty:
-                    # Handle recent yfinance versions returning MultiIndex even for single ticker
+                    # Handle recent yfinance versions returning MultiIndex
                     if isinstance(df.columns, pd.MultiIndex):
                         df.columns = df.columns.get_level_values(0)
                         
-                    # Verification: Ensure the ticker in the data matches the requested one
-                    # This prevents data collision in parallel downloads for symbols sharing ISIN
-                    if 'Ticker' in df.columns:
-                         # For MultiIndex/Grouped data
-                         pass 
+                    # Resample if 4h was requested
+                    if self.interval == '4h':
+                        # Resample to 4H: Open: first, High: max, Low: min, Close: last, Volume: sum
+                        logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
+                        df = df.resample('4H').apply(logic).dropna()
+                        
                     return df
             except Exception:
                 pass
             
             if attempt < max_retries - 1:
-                time.sleep(1) # Wait 1 second before retrying
+                time.sleep(1.5)
                 
-        raise ValueError(f"No data found for {self.ticker} after {max_retries} attempts")
+        raise ValueError(f"No data found for {self.ticker} after {max_retries} attempts. If using 4h/1h, ensure period is within 730d.")
 
     def add_indicators(self):
         # EMAs

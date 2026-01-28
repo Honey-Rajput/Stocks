@@ -130,10 +130,10 @@ max_scan_stocks = st.sidebar.slider("Max Stocks to Scan", min_value=100, max_val
 # We will use this dynamically for all scanners.
 
 
-# Periods for indicators
+# Periods for indicators (Capped at yfinance limits for stability)
 periods = {
-    "1m": "7d", "5m": "30d", "15m": "60d", "1h": "90d", 
-    "4h": "max", "1d": "max", "1wk": "max", "1mo": "max"
+    "1m": "7d", "5m": "30d", "15m": "60d", "1h": "730d", 
+    "4h": "730d", "1d": "max", "1wk": "max", "1mo": "max"
 }
 
 st.title("🚀 Stock Market AI Agent")
