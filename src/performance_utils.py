@@ -193,41 +193,49 @@ def create_stock_processor(analysis_func: Callable, result_limit: int = 20):
     return processor
 
 
-def filter_by_market_cap(ticker_pool: List[str], min_market_cap: float = 0) -> List[str]:
+def filter_by_market_cap(ticker_pool: List[str], min_market_cap: float = 10000000000) -> List[str]:
     """
     Pre-filter tickers by market cap to reduce processing time.
+    Standardized to 1000 Crore (10 Billion) if not specified.
     
     Args:
         ticker_pool: List of tickers
-        min_market_cap: Minimum market cap in rupees
+        min_market_cap: Minimum market cap in rupees (Default: 1000 Cr)
     
     Returns:
         Filtered list of tickers
     """
     import yfinance as yf
     
-    filtered = []
-    
     def check_mcap(ticker):
         try:
             full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
-            info = yf.Ticker(full_ticker).info
-            mcap = info.get('marketCap', 0)
+            # Use fast_info if available in newer yfinance, else info
+            t = yf.Ticker(full_ticker)
+            mcap = getattr(t, 'fast_info', {}).get('market_cap', t.info.get('marketCap', 0))
             if mcap >= min_market_cap:
                 return ticker
         except:
             pass
         return None
     
-    # Use parallel processing for market cap filtering
-    filtered = parallel_process_stocks(
+    return parallel_process_stocks(
         ticker_pool,
         check_mcap,
-        max_workers=20,  # Higher workers for quick info checks
+        max_workers=20,
         timeout_per_stock=5.0
     )
-    
-    return filtered
+
+def is_market_cap_ok(ticker: str, min_market_cap: float = 10000000000) -> bool:
+    """Check if single stock meets market cap requirement (Default 1000 Cr)."""
+    import yfinance as yf
+    try:
+        full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
+        t = yf.Ticker(full_ticker)
+        mcap = getattr(t, 'fast_info', {}).get('market_cap', t.info.get('marketCap', 0))
+        return mcap >= min_market_cap
+    except:
+        return False
 def batch_download_data(tickers: List[str], period: str = '60d', interval: str = '1d') -> Dict[str, Any]:
     """
     Download data for multiple tickers in a single batch to improve performance.

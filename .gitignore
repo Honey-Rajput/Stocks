@@ -38,3 +38,4 @@ wheels/
 .agent/
 brain/
 downloads/
+scanner_cache/

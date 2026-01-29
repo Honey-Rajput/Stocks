@@ -5,6 +5,7 @@ from analysis_engine import AnalysisEngine
 import pandas as pd
 from datetime import datetime
 import time
+from db_utils import get_db_manager
 
 # Page config
 st.set_page_config(page_title="Stock Market AI Agent", layout="wide", page_icon="📈")
@@ -64,18 +65,32 @@ def get_nse_stocks():
         return {"RELIANCE - RELIANCE INDUSTRIES LTD": "RELIANCE"}
 
 def add_tradingview_column(results):
-    """Transforms the Symbol/ticker column into a TradingView URL."""
+    """Transforms the Stock Symbol column into a TradingView URL for clickable rows."""
     if not results: return results
+    # Work on a copy to avoid side effects if reused
+    processed = []
     for res in results:
-        # Check both possible keys
-        key = 'Stock Symbol' if 'Stock Symbol' in res else 'ticker'
-        symbol = res.get(key)
+        new_res = res.copy()
+        # Standardize key
+        key = 'Stock Symbol' if 'Stock Symbol' in new_res else ('ticker' if 'ticker' in new_res else None)
+        if not key: 
+            processed.append(new_res)
+            continue
+            
+        symbol = new_res.get(key)
         if symbol:
-            # Clean symbol (remove .NS if present for TV mapping)
-            clean_symbol = str(symbol).replace(".NS", "")
-            # We transform the symbol itself into a URL for LinkColumn to pick up
-            res[key] = f"https://www.tradingview.com/chart/?symbol=NSE:{clean_symbol}"
-    return results
+            # If already a URL, don't double wrap
+            if "tradingview.com" in str(symbol):
+                new_res['Stock Symbol'] = symbol
+            else:
+                clean_symbol = str(symbol).replace(".NS", "")
+                new_res['Stock Symbol'] = f"https://www.tradingview.com/chart/?symbol=NSE:{clean_symbol}"
+            
+            # Remove old key if it was 'ticker'
+            if key == 'ticker':
+                new_res.pop('ticker', None)
+        processed.append(new_res)
+    return processed
 
 nse_stocks_dict = get_nse_stocks()
 stock_options = sorted(list(nse_stocks_dict.keys()))
@@ -104,19 +119,13 @@ except:
     MODEL_URL = "https://api.euron.one/api/v1/euri/chat/completions"
     MODEL_KEY = "euri-547dc00208e76ce2d4150524fa1461bf55f8183a73c7419f9f8bd6410a76d743"
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("🤖 AI Intelligence")
-use_ai = st.sidebar.toggle("Enable AI Reasoning", value=True, help="Use custom LLM for advanced market commentary")
-selected_model = st.sidebar.selectbox("Select Model", 
-    options=["gpt-5-nano-2025-08-07", "gpt-5-mini-2025-08-07", "gpt-4.1-nano", "gpt-4.1-mini", "gpt-oss-20b", "gpt-oss-120b"])
+# Default AI settings (hidden from UI)
+use_ai = True
+selected_model = "gpt-5-nano-2025-08-07"
 
-# Scanner Performance Configuration
-st.sidebar.markdown("---")
-st.sidebar.subheader("⚡ Scanner Settings")
-max_workers = st.sidebar.slider("Parallel Workers", min_value=5, max_value=20, value=10, 
-                                 help="Higher = faster but may hit API limits")
-max_scan_stocks = st.sidebar.slider("Max Stocks to Scan", min_value=100, max_value=3000, value=2200, step=100,
-                                     help="Limit stocks scanned for faster results. Full NSE is ~2200 stocks.")
+# Scanner Performance Configuration (hidden from UI)
+max_workers = 4  # Reduced from 10 to prevent rate limiting
+max_scan_stocks = 2200
 
 # The nse_stocks_dict variable already contains the full live NSE list from EQUITY_L.csv
 # We will use this dynamically for all scanners.
@@ -427,6 +436,24 @@ if ticker:
             st.subheader("💹 Smart Money Concept & Institutional Tracker")
             st.info("Detecting institutional accumulation and large volume absorption across the market.")
             
+            # 1. Load and Display Cached Results (Immediate)
+            db = get_db_manager()
+            cached_results, last_updated = db.get_results("smc")
+            
+            if cached_results:
+                st.success(f"✅ Loaded {len(cached_results)} stocks from Database (Last Updated: {last_updated.strftime('%H:%M %d %b')})")
+                display_df = pd.DataFrame(add_tradingview_column(cached_results))
+                st.dataframe(display_df, 
+                             column_config={
+                                 "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="symbol=NSE:(.*)"),
+                                 "Score": None,
+                                 "pct_change": None
+                             },
+                             use_container_width=True)
+            else:
+                st.info("💡 Data is being prepared. Check back soon or run a manual scan.")
+
+            # 2. Manual Scan Option
             if st.button("🛰️ Run Smart Money Scanner"):
                 progress_bar = st.progress(0)
                 status_text = st.empty()
@@ -447,10 +474,13 @@ if ticker:
                             sm_stocks = add_tradingview_column(sm_stocks)
                             st.dataframe(pd.DataFrame(sm_stocks), 
                                          column_config={
-                                             "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)"),
-                                             "Score": None # Hide sorting score
+                                             "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="symbol=NSE:(.*)"),
+                                             "Score": None,
+                                             "pct_change": None
                                          },
                                          use_container_width=True)
+                            # Save to DB if scanned manually
+                            db.save_results("smc", sm_stocks)
                         else:
                             status_text.warning("No significant institutional activity detected.")
                     except Exception as e:
@@ -460,6 +490,24 @@ if ticker:
             st.subheader("🎯 Swing Trading Scanner (15–20 Days)")
             st.info("Scanning for stocks with EMA alignment, RSI momentum, and Volume surge.")
             
+            # 1. Load and Display Cached Results (Immediate)
+            db = get_db_manager()
+            cached_results, last_updated = db.get_results("swing")
+            
+            if cached_results:
+                st.success(f"✅ Loaded {len(cached_results)} setups from Database (Last Updated: {last_updated.strftime('%H:%M %d %b')})")
+                display_df = pd.DataFrame(add_tradingview_column(cached_results))
+                st.dataframe(display_df, 
+                             column_config={
+                                 "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="symbol=NSE:(.*)"),
+                                 "pct_change": None,
+                                 "Score": None
+                             },
+                             use_container_width=True)
+            else:
+                st.info("💡 Data is being prepared. Check back soon or run a manual scan.")
+
+            # 2. Manual Scan Option
             if st.button("🔍 Run Swing Scanner"):
                 progress_bar = st.progress(0)
                 status_text = st.empty()
@@ -494,10 +542,13 @@ if ticker:
                             swing_stocks = add_tradingview_column(swing_stocks)
                             st.dataframe(pd.DataFrame(swing_stocks), 
                                          column_config={
-                                             "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)"),
-                                             "pct_change": None # Hide sorting metric
+                                             "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="symbol=NSE:(.*)"),
+                                             "pct_change": None,
+                                             "Score": None
                                          },
                                          use_container_width=True)
+                            # Save to DB if scanned manually
+                            db.save_results("swing", swing_stocks)
                         else:
                             st.warning("No high-quality bullish swing setups found at the moment.")
                     except Exception as e:
@@ -507,6 +558,22 @@ if ticker:
             st.subheader("⏳ Long Term Investing")
             st.info("Filtering for stocks with high growth, ROE, and low debt (Fundamental Strength).")
             
+            # 1. Load and Display Cached Results (Immediate)
+            db = get_db_manager()
+            cached_results, last_updated = db.get_results("long_term")
+            
+            if cached_results:
+                st.success(f"✅ Loaded {len(cached_results)} companies from Database (Last Updated: {last_updated.strftime('%H:%M %d %b')})")
+                display_df = pd.DataFrame(add_tradingview_column(cached_results))
+                st.dataframe(display_df, 
+                             column_config={
+                                 "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="symbol=NSE:(.*)")
+                             },
+                             use_container_width=True)
+            else:
+                st.info("💡 Data is being prepared. Check back soon or run a manual scan.")
+
+            # 2. Manual Scan Option
             if st.button("📈 Run Long-Term Scanner", key="long_term_scanner"):
                 progress_bar = st.progress(0)
                 status_text = st.empty()
@@ -527,9 +594,11 @@ if ticker:
                             lt_stocks = add_tradingview_column(lt_stocks)
                             st.dataframe(pd.DataFrame(lt_stocks), 
                                          column_config={
-                                             "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")
+                                             "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="symbol=NSE:(.*)")
                                          },
                                          use_container_width=True)
+                            # Save to DB if scanned manually
+                            db.save_results("long_term", lt_stocks)
                         else:
                             status_text.warning("No stocks met the strict fundamental criteria.")
                     except Exception as e:
@@ -539,6 +608,18 @@ if ticker:
             st.subheader("🗓️ Cyclical Stocks by Quarter")
             st.info("Stocks categorized by their historically best-performing quarter (10yr backtest).")
             
+            # 1. Load and Display Cached Results (Immediate)
+            db = get_db_manager()
+            cached_results, last_updated = db.get_results("cyclical")
+            
+            if cached_results:
+                st.success(f"✅ Loaded seasonal patterns from Database (Last Updated: {last_updated.strftime('%H:%M %d %b')})")
+                cyclical_groups = cached_results
+            else:
+                st.info("💡 Seasonal data is being prepared. Run manual scan for instant calculation.")
+                cyclical_groups = None
+
+            # 2. Manual Scan Option
             if st.button("🗓️ Run Cyclical Scanner"):
                 progress_bar = st.progress(0)
                 status_text = st.empty()
@@ -546,12 +627,15 @@ if ticker:
                 
                 with st.spinner("Calculating 10-year seasonal return probabilities for NSE stocks..."):
                     try:
+                        st.info("Scanning for seasonal patterns (this may take a minute)...")
                         all_tickers = list(nse_stocks_dict.values())[:max_scan_stocks]
                         cyclical_groups = AnalysisEngine.get_cyclical_stocks_by_quarter(
                             all_tickers,
                             max_results_per_quarter=15,
                             max_workers=8  # Lower workers for data-heavy operation
                         )
+                        # Save to DB if scanned manually
+                        db.save_results("cyclical", cyclical_groups)
                         
                         elapsed = time.time() - start_time
                         total_found = sum(len(v) for v in cyclical_groups.values())
@@ -616,6 +700,18 @@ if ticker:
             st.markdown("### 🛰️ Weinstein Market-wide Scanner")
             st.write("Scan the entire market to find stocks currently in specific stages.")
             
+            # 1. Load and Display Cached Results (Immediate)
+            db = get_db_manager()
+            cached_results, last_updated = db.get_results("stage_analysis")
+            
+            if cached_results:
+                st.success(f"✅ Loaded Market Stages from Database (Last Updated: {last_updated.strftime('%H:%M %d %b')})")
+                stage_results = cached_results
+            else:
+                st.info("💡 Market stage data is being prepared.")
+                stage_results = None
+
+            # 2. Manual Scan Option
             if st.button("🚀 Run Stage Scanner"):
                 progress_bar = st.progress(0)
                 status_text = st.empty()
@@ -623,11 +719,13 @@ if ticker:
                 
                 with st.spinner("Classifying market into Weinstein Stages (1-4)..."):
                     try:
+                        st.info("Running market-wide stage classification...")
                         all_tickers = list(nse_stocks_dict.values())[:max_scan_stocks]
                         stage_results = AnalysisEngine.get_weinstein_scanner_stocks(
                             all_tickers,
                             max_workers=max_workers
                         )
+                        db.save_results("stage_analysis", stage_results)
                         
                         elapsed = time.time() - start_time
                         total_found = sum(len(v) for v in stage_results.values())

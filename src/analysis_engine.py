@@ -335,6 +335,10 @@ class AnalysisEngine:
         from concurrent.futures import ThreadPoolExecutor
         opportunities = {"buys": [], "sells": []}
         
+        # 1000 Cr Market Cap Filter
+        from performance_utils import filter_by_market_cap
+        ticker_list = filter_by_market_cap(ticker_list, min_market_cap=10000000000)
+        
         # INCREASE BATCH SIZE: Optimization for performance
         pool = list(ticker_list)[:1000] # Increased limit for better coverage
         batch_size = 100
@@ -676,6 +680,10 @@ class AnalysisEngine:
     @staticmethod
     def get_swing_stocks(ticker_pool, interval='1d', period='1y', max_results=20, max_workers=20, progress_callback=None):
         """Scans for stocks suitable for 15-20 days swing trading using batch processing."""
+        from performance_utils import filter_by_market_cap
+        
+        # 1000 Cr Market Cap Filter
+        ticker_pool = filter_by_market_cap(ticker_pool, min_market_cap=10000000000)
         
         # Process full market pool
         from concurrent.futures import ThreadPoolExecutor
@@ -719,6 +727,12 @@ class AnalysisEngine:
             try:
                 full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
                 t = yf.Ticker(full_ticker)
+                
+                # Check Market Cap > 1000 Cr first
+                mcap = getattr(t, 'fast_info', {}).get('market_cap', t.info.get('marketCap', 0))
+                if mcap < 10000000000:
+                    return None
+
                 info = t.info
                 
                 # fundamental_filters: Rev growth > 10% (Growth), ROE > 15% (Efficiency), D/E < 0.5 (Stability)
@@ -763,32 +777,59 @@ class AnalysisEngine:
         """Helper to process a single stock's seasonality in parallel."""
         try:
             df = df.copy()
-            if df.empty: return None
+            if df.empty or len(df) < 50: return None # Need at least ~5 years of data
             
-            df['Return'] = df['Close'].pct_change()
-            df['Quarter'] = df.index.quarter
-            avg_returns = df.groupby('Quarter')['Return'].mean() * 100
-            if avg_returns.empty or avg_returns.isna().all(): return None
+            # Resample to quarterly returns
+            df_q = df['Close'].resample('Q').last().pct_change() * 100
+            df_q = df_q.dropna()
             
-            best_q = avg_returns.idxmax()
-            best_ret = avg_returns.max()
+            if df_q.empty: return None
             
-            if best_ret > 1.0: 
-                q_map = {1: "Q1", 2: "Q2", 3: "Q3", 4: "Q4"}
-                months_map = {"Q1": "Jan-Mar", "Q2": "Apr-Jun", "Q3": "Jul-Sep", "Q4": "Oct-Dec"}
-                reasons_map = {"Q1": "Union Budget & Financial Year Closing", "Q2": "Monsoon Trends & Rural Demand", "Q3": "Festive Spending & Retail Sales", "Q4": "Year-end Capex & Holidays"}
+            # Group by calendar quarter
+            quarters = df_q.index.quarter
+            
+            stats = []
+            for q in range(1, 5):
+                q_returns = df_q[quarters == q]
+                if len(q_returns) < 5: continue # Skip if less than 5 instances of this quarter
                 
-                return {
-                    "Stock Symbol": ticker,
-                    "Sector": "Nifty Core",
-                    "Quarter": q_map[best_q],
-                    "Best Performing Quarter (Q1/Q2/Q3/Q4)": q_map[best_q],
-                    "Average Return in that Quarter (%)": f"{best_ret:.1f}%",
-                    "Strong Months": months_map[q_map[best_q]],
-                    "Historical Catalyst (Reason for movement)": reasons_map[q_map[best_q]],
-                    "Investment Logic (why buy)": f"Consistently outperforms in {q_map[best_q]} due to seasonal patterns.",
-                    "Score": best_ret # For sorting
-                }
+                pos_years = (q_returns > 0).sum()
+                prob = pos_years / len(q_returns)
+                median_ret = q_returns.median()
+                
+                stats.append({
+                    "Quarter": q,
+                    "Probability": prob,
+                    "MedianReturn": median_ret,
+                    "Count": len(q_returns)
+                })
+            
+            if not stats: return None
+            
+            # Select best quarter: Must have > 70% probability AND > 2% median return
+            # This ensures consistency as requested by user.
+            valid_quarters = [s for s in stats if s['Probability'] >= 0.7 and s['MedianReturn'] >= 2.0]
+            if not valid_quarters: return None
+            
+            best_stat = max(valid_quarters, key=lambda x: x['Probability'] * 10 + x['MedianReturn'])
+            best_q = best_stat['Quarter']
+            
+            q_map = {1: "Q1", 2: "Q2", 3: "Q3", 4: "Q4"}
+            months_map = {"Q1": "Jan-Mar", "Q2": "Apr-Jun", "Q3": "Jul-Sep", "Q4": "Oct-Dec"}
+            reasons_map = {"Q1": "Union Budget & Financial Year Closing", "Q2": "Monsoon Trends & Rural Demand", "Q3": "Festive Spending & Retail Sales", "Q4": "Year-end Capex & Holidays"}
+            
+            return {
+                "Stock Symbol": ticker,
+                "Sector": "Nifty Core",
+                "Quarter": q_map[best_q],
+                "Best Performing Quarter (Q1/Q2/Q3/Q4)": q_map[best_q],
+                "Probabilistic Consistency (%)": f"{best_stat['Probability']*100:.0f}%",
+                "Historical Median Return (%)": f"{best_stat['MedianReturn']:.1f}%",
+                "Strong Months": months_map[q_map[best_q]],
+                "Historical Catalyst (Reason for movement)": reasons_map[q_map[best_q]],
+                "Investment Logic (why buy)": f"In {best_stat['Probability']*100:.0f}% of the last {best_stat['Count']} years, this stock gave positive returns in this quarter.",
+                "Score": best_stat['Probability'] * 100 + best_stat['MedianReturn']
+            }
         except Exception:
             pass
         return None
@@ -797,6 +838,11 @@ class AnalysisEngine:
     @timed_cache(seconds=600)  # Cache for 10 minutes - this is expensive
     def get_cyclical_stocks_by_quarter(ticker_pool, max_results_per_quarter=15, max_workers=8):
         """Assigns stocks to quarters based on 10-year historical return seasonality using batch processing."""
+        from performance_utils import filter_by_market_cap
+        
+        # 1000 Cr Market Cap Filter
+        ticker_pool = filter_by_market_cap(ticker_pool, min_market_cap=10000000000)
+        
         from concurrent.futures import ThreadPoolExecutor
         quarterly_data = {"Q1": [], "Q2": [], "Q3": [], "Q4": []}
         pool = list(ticker_pool)
@@ -866,6 +912,11 @@ class AnalysisEngine:
     @staticmethod
     def get_smart_money_stocks(ticker_pool, max_results=20, max_workers=12):
         """Finds stocks with institutional accumulation footprints (VSA logic) using batch processing."""
+        from performance_utils import filter_by_market_cap
+        
+        # 1000 Cr Market Cap Filter
+        ticker_pool = filter_by_market_cap(ticker_pool, min_market_cap=10000000000)
+        
         from concurrent.futures import ThreadPoolExecutor
         pool = list(ticker_pool)
         all_results = []
@@ -918,6 +969,11 @@ class AnalysisEngine:
     @staticmethod
     def get_weinstein_scanner_stocks(ticker_pool, max_workers=10):
         """Deterministically classifies market into Weinstein Stages by Market Cap using batch processing."""
+        from performance_utils import filter_by_market_cap
+        
+        # 1000 Cr Market Cap Filter
+        ticker_pool = filter_by_market_cap(ticker_pool, min_market_cap=10000000000)
+        
         stages = {"Stage 1 - Basing": [], "Stage 2 - Advancing": [], "Stage 3 - Top": [], "Stage 4 - Declining": []}
         from concurrent.futures import ThreadPoolExecutor
         stages = {"Stage 1 - Basing": [], "Stage 2 - Advancing": [], "Stage 3 - Top": [], "Stage 4 - Declining": []}

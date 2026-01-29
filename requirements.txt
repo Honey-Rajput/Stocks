@@ -6,3 +6,8 @@ plotly
 pandas
 numpy
 requests
+pymongo
+python-dotenv
+pytz
+psycopg2-binary
+sqlalchemy
