@@ -239,6 +239,7 @@ def is_market_cap_ok(ticker: str, min_market_cap: float = 10000000000) -> bool:
 def batch_download_data(tickers: List[str], period: str = '60d', interval: str = '1d') -> Dict[str, Any]:
     """
     Download data for multiple tickers in a single batch to improve performance.
+    Includes retry logic and individual ticker fallback for robustness.
     """
     import yfinance as yf
     import pandas as pd
@@ -252,44 +253,74 @@ def batch_download_data(tickers: List[str], period: str = '60d', interval: str =
     if not formatted_tickers:
         return {}
         
-    session = requests.Session()
-    session.headers.update({'User-Agent': 'Mozilla/5.0'})
+    results = {}
     
-    try:
-        data = yf.download(
-            formatted_tickers, 
-            period=period, 
-            interval=interval, 
-            auto_adjust=True, 
-            group_by='ticker',
-            progress=False,
-            threads=True,
-            timeout=40 
-        )
-        
-        results = {}
-        if data is None or data.empty:
-            return {}
+    # Try batch download first with retry
+    for attempt in range(2):  # 2 attempts for batch
+        try:
+            data = yf.download(
+                formatted_tickers, 
+                period=period, 
+                interval=interval, 
+                auto_adjust=True, 
+                group_by='ticker',
+                progress=False,
+                threads=True,
+                timeout=40 
+            )
+            
+            if data is None or data.empty:
+                # Move to individual fallback
+                break
 
-        # Standardize: Always treat as MultiIndex if possible, or handle single column
-        if isinstance(data.columns, pd.MultiIndex):
-            # Tickers are in the first level
-            for ticker_symbol in data.columns.get_level_values(0).unique():
-                ticker_df = data[ticker_symbol]
-                if isinstance(ticker_df, pd.DataFrame):
-                    ticker_df = ticker_df.dropna(subset=['Close'])
-                    if not ticker_df.empty:
-                        clean_name = str(ticker_symbol).replace(".NS", "")
-                        results[clean_name] = ticker_df
-        else:
-            # Single ticker, non-MultiIndex (happens with 1 ticker sometimes)
-            df = data.dropna(subset=['Close'])
-            if not df.empty:
-                # Use the first requested ticker as key
-                clean_name = formatted_tickers[0].replace(".NS", "")
-                results[clean_name] = df
+            # Standardize: Always treat as MultiIndex if possible, or handle single column
+            if isinstance(data.columns, pd.MultiIndex):
+                # Tickers are in the first level
+                for ticker_symbol in data.columns.get_level_values(0).unique():
+                    ticker_df = data[ticker_symbol]
+                    if isinstance(ticker_df, pd.DataFrame):
+                        ticker_df = ticker_df.dropna(subset=['Close'])
+                        if not ticker_df.empty and len(ticker_df) >= 20:
+                            clean_name = str(ticker_symbol).replace(".NS", "")
+                            results[clean_name] = ticker_df
+            else:
+                # Single ticker, non-MultiIndex (happens with 1 ticker sometimes)
+                df = data.dropna(subset=['Close'])
+                if not df.empty and len(df) >= 20:
+                    # Use the first requested ticker as key
+                    clean_name = formatted_tickers[0].replace(".NS", "")
+                    results[clean_name] = df
+            
+            # If we got results, return them
+            if results:
+                return results
                 
-        return results
-    except Exception as e:
-        print(f"Internal Batch Error: {e}")
-        return {}
+        except Exception as e:
+            # Try again or move to fallback
+            if attempt == 0:
+                time.sleep(1)  # Wait before retry
+                continue
+    
+    # Fallback: Download tickers individually for robustness
+    for ticker in formatted_tickers:
+        try:
+            df = yf.download(
+                ticker,
+                period=period,
+                interval=interval,
+                auto_adjust=True,
+                progress=False,
+                timeout=20
+            )
+            
+            if df is not None and not df.empty:
+                df = df.dropna(subset=['Close'])
+                if not df.empty and len(df) >= 20:
+                    clean_name = ticker.replace(".NS", "")
+                    results[clean_name] = df
+                    
+        except Exception:
+            # Skip this ticker and continue
+            pass
+    
+    return results

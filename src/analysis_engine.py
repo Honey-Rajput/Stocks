@@ -682,7 +682,7 @@ class AnalysisEngine:
         """Scans for stocks suitable for 15-20 days swing trading using batch processing."""
         from performance_utils import filter_by_market_cap
         
-        # 1000 Cr Market Cap Filter
+        # 1000 Cr Market Cap Filter (quality stocks only)
         ticker_pool = filter_by_market_cap(ticker_pool, min_market_cap=10000000000)
         
         # Process full market pool
