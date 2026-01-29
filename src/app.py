@@ -125,7 +125,7 @@ selected_model = "gpt-5-nano-2025-08-07"
 
 # Scanner Performance Configuration (hidden from UI)
 max_workers = 4  # Reduced from 10 to prevent rate limiting
-max_scan_stocks = 2200
+max_scan_stocks = 500 # Reduced from 2200 to Nifty 500 size to prevent API 401/Crumb errors
 
 # The nse_stocks_dict variable already contains the full live NSE list from EQUITY_L.csv
 # We will use this dynamically for all scanners.
