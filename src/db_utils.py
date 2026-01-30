@@ -32,7 +32,14 @@ class PostgresDBManager:
         self.Session = sessionmaker(bind=self.engine)
 
     def save_results(self, scanner_type, results):
-        """Save scanner results to PostgreSQL."""
+        """Save scanner results to PostgreSQL and history."""
+        from scanner_history import get_history_manager
+        # Import sanitizer to ensure JSONB receives valid JSON (no NaN/Inf, numpy types)
+        try:
+            from json_utils import sanitize_for_json
+        except Exception:
+            sanitize_for_json = None
+        
         session = self.Session()
         try:
             # Check if exists
@@ -40,19 +47,31 @@ class PostgresDBManager:
             
             now = datetime.now()
             
+            # Sanitize results to avoid NaN/Inf and non-serializable types
+            safe_results = sanitize_for_json(results) if sanitize_for_json else results
+
             if existing:
-                existing.data = results
+                existing.data = safe_results
                 existing.last_updated = now
             else:
                 new_entry = ScannerResult(
                     scanner_type=scanner_type, 
-                    data=results, 
+                    data=safe_results, 
                     last_updated=now
                 )
                 session.add(new_entry)
             
             session.commit()
             print(f"✅ Saved {len(results)} items to DB for {scanner_type}")
+            
+            # Also save to history (15-day rolling window) using sanitized data
+            history_mgr = get_history_manager()
+            try:
+                history_mgr.save_results_with_history(scanner_type, safe_results)
+            except Exception:
+                # Fallback to original if history save fails for unexpected reasons
+                history_mgr.save_results_with_history(scanner_type, results)
+            
         except Exception as e:
             session.rollback()
             print(f"❌ Error saving to DB: {e}")
@@ -117,3 +136,4 @@ def get_db_manager():
     except Exception as e:
         print(f"⚠️ NeonDB unavailable ({e}), falling back to local storage.")
         return LocalDBManager()
+

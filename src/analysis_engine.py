@@ -12,6 +12,22 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
+    from fundamental_cache import FundamentalCache
+except ImportError:
+    FundamentalCache = None
+
+try:
+    from scanner_robustness import ScannerConfig, DataValidator
+except ImportError:
+    class ScannerConfig:
+        SWING_MIN_PRICE = 50
+        SWING_MIN_RSI = 50
+        SMC_MIN_ROWS = 100
+        CYCLICAL_MIN_PROBABILITY = 0.65
+        CYCLICAL_MIN_RETURN = 2.0
+    DataValidator = None
+
+try:
     from performance_utils import (
         parallel_process_stocks, 
         timed_cache, 
@@ -637,7 +653,7 @@ class AnalysisEngine:
                 
             df = df.copy()
             price = df['Close'].iloc[-1]
-            if price < 100:
+            if price < ScannerConfig.SWING_MIN_PRICE:
                 return None
                 
             # Calculations
@@ -645,14 +661,16 @@ class AnalysisEngine:
             df['Vol_SMA_20'] = df['Volume'].rolling(window=20).mean()
             df['RSI_14'] = ta.rsi(df['Close'], length=14)
             
-            # Indicators are now computed, check the values
-            ema_val = df['EMA_20'].iloc[-1]
-            vol_sma_val = df['Vol_SMA_20'].iloc[-1]
-            rsi_val = df['RSI_14'].iloc[-1]
+            # Indicators are now computed, check the values with validation
+            ema_val = DataValidator.safe_get_value(df['EMA_20'], default=None) if DataValidator else df['EMA_20'].iloc[-1]
+            vol_sma_val = DataValidator.safe_get_value(df['Vol_SMA_20'], default=None) if DataValidator else df['Vol_SMA_20'].iloc[-1]
+            rsi_val = DataValidator.safe_get_value(df['RSI_14'], default=None) if DataValidator else df['RSI_14'].iloc[-1]
             
+            if ema_val is None or vol_sma_val is None or rsi_val is None:
+                return None
             if price <= ema_val: return None
             if df['Volume'].iloc[-1] <= vol_sma_val: return None
-            if rsi_val <= 50: return None
+            if rsi_val <= ScannerConfig.SWING_MIN_RSI: return None
             
             # 40-Day Close Breakout
             max_40_close = df['Close'].rolling(40).max().shift(1).iloc[-1]
@@ -678,12 +696,14 @@ class AnalysisEngine:
         return None
 
     @staticmethod
-    def get_swing_stocks(ticker_pool, interval='1d', period='1y', max_results=20, max_workers=20, progress_callback=None):
+    def get_swing_stocks(ticker_pool, interval='1d', period='1y', max_results=20, max_workers=20, progress_callback=None, min_market_cap=None):
         """Scans for stocks suitable for 15-20 days swing trading using batch processing."""
         from performance_utils import filter_by_market_cap
-        
-        # 1000 Cr Market Cap Filter (quality stocks only)
-        ticker_pool = filter_by_market_cap(ticker_pool, min_market_cap=10000000000)
+
+        # Market Cap Filter (quality stocks only) - default 1000 Cr if not specified
+        if min_market_cap is None:
+            min_market_cap = 10000000000
+        ticker_pool = filter_by_market_cap(ticker_pool, min_market_cap=min_market_cap)
         
         # Process full market pool
         from concurrent.futures import ThreadPoolExecutor
@@ -728,27 +748,88 @@ class AnalysisEngine:
                 full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
                 t = yf.Ticker(full_ticker)
                 
-                # Check Market Cap > 1000 Cr first
-                mcap = getattr(t, 'fast_info', {}).get('market_cap', t.info.get('marketCap', 0))
-                if mcap < 10000000000:
-                    return None
+                # IMPROVED: Multiple attempts to fetch data with retries
+                max_retries = 3
+                info = None
+                for attempt in range(max_retries):
+                    try:
+                        info = t.info
+                        if info and isinstance(info, dict) and len(info) > 0:
+                            break
+                    except Exception:
+                        # continue and retry
+                        info = None
+                    time.sleep(0.3)
 
-                info = t.info
+                # If yfinance info is missing, we'll continue and rely on cached/fallback fundamentals
+                if not info or not isinstance(info, dict):
+                    info = {}
                 
-                # fundamental_filters: Rev growth > 10% (Growth), ROE > 15% (Efficiency), D/E < 0.5 (Stability)
-                rev_growth = info.get('revenueGrowth', 0) # 10%: Chosen as baseline for outperforming GDP/Sector growth
-                profit_growth = info.get('earningsGrowth', 0) 
-                roe = info.get('returnOnEquity', 0) # 15%: Global benchmark for high-quality return on capital
-                debt_equity = info.get('debtToEquity', 100) / 100 # 0.5: Chosen to filter for low leverage/clean balance sheets
-                market_cap = info.get('marketCap', 0) # Market Cap > 5000cr: Filter for Large/Quality Mid-cap stability
+                # Try to determine market cap; if unavailable, mark as None and fallback to cached fundamentals
+                mcap = None
+                try:
+                    mcap = info.get('marketCap') if isinstance(info, dict) else None
+                except Exception:
+                    mcap = None
+
+                try:
+                    if not mcap:
+                        mcap = getattr(t, 'fast_info', {}).get('market_cap')
+                except Exception:
+                    mcap = mcap
+
+                # mcap may still be None if yfinance is blocked; keep None for now and rely on cached fundamentals if present
+
+                # IMPROVED: Use enhanced data fetching with fallback sources
+                if FundamentalCache:
+                    # Use cached/fallback fundamentals first (screener.in etc.) — this avoids yfinance gaps
+                    enhanced_data = FundamentalCache.get_fundamental_data(ticker, info)
+                    rev_growth = enhanced_data.get('rev_growth')
+                    roe = enhanced_data.get('roe')
+                    debt_equity = enhanced_data.get('debt_equity')
+                    data_source = enhanced_data.get('source', 'yfinance')
+                else:
+                    # Fallback if fundamental_cache not available
+                    rev_growth = (
+                        info.get('revenueGrowth') or
+                        info.get('revenuePerShare') or
+                        info.get('trailingAnnualDividendRate')
+                    )
+                    roe = info.get('returnOnEquity')
+                    debt_equity = info.get('debtToEquity')
+                    if debt_equity and debt_equity > 1:
+                        debt_equity = debt_equity / 100
+                    data_source = 'yfinance'
                 
-                if rev_growth > 0.1 and roe > 0.15 and debt_equity < 0.5 and market_cap > 50_000_000_000:
+                profit_growth = info.get('earningsGrowth')
+                market_cap = mcap or info.get('marketCap') or 0
+
+                # STRICT CONDITIONS (All must pass - but tolerate missing market cap if we have reliable cached fundamentals)
+                fundamentals_ok = (rev_growth is not None and rev_growth > 0.1 and
+                                    roe is not None and roe > 0.15 and
+                                    debt_equity is not None and debt_equity < 0.5)
+
+                market_cap_threshold = 50_000_000_000
+
+                # If market_cap is missing (None or 0) but fundamentals are strongly OK and came from cache/fallback,
+                # accept the stock to avoid false negatives when yfinance is blocked.
+                if fundamentals_ok and (market_cap and market_cap > market_cap_threshold):
+                    pass_check = True
+                elif fundamentals_ok and (not market_cap):
+                    # Best-effort accept when market cap unavailable but fundamentals from screener/cache are good
+                    pass_check = True
+                else:
+                    pass_check = False
+
+                if not pass_check:
+                    return None
+                    
                     return {
                         "Stock Symbol": ticker,
                         "Sector": info.get('sector', 'N/A'),
-                        "Market Cap": f"₹{market_cap/1e7:.2f} Cr",
+                        "Market Cap": f"₹{(market_cap/1e7) if market_cap else 0:.2f} Cr",
                         "Revenue Growth %": f"{rev_growth*100:.1f}%",
-                        "Profit Growth %": f"{profit_growth*100:.1f}%",
+                        "Profit Growth %": f"{profit_growth*100:.1f}%" if profit_growth else "N/A",
                         "ROE %": f"{roe*100:.1f}%",
                         "Debt to Equity": f"{debt_equity:.2f}",
                         "Long-Term Thesis (1–2 line summary)": "Compounder stock with strong moats and fiscal discipline.",
@@ -756,7 +837,7 @@ class AnalysisEngine:
                         "Risk Level (Low / Medium / High)": "Low" if debt_equity < 0.1 else "Medium"
                     }
                 return None
-            except Exception:
+            except Exception as e:
                 return None
         
         # Use parallel processing - info fetching is fast
@@ -765,11 +846,44 @@ class AnalysisEngine:
             ticker_pool,
             processor,
             max_workers=max_workers,
-            max_stocks=800,  # Check more stocks since it's just info fetching
+            max_stocks=1500,  # INCREASED: Need to scan more to compensate for data gaps
             progress_callback=progress_callback
         )
         # Sort results by symbol for deterministic UI
         results = sorted(results, key=lambda x: x.get('Stock Symbol', ''))
+        # If strict scan yielded nothing, fallback to cached fundamentals (if available)
+        if not results and FundamentalCache:
+            try:
+                cache_mgr = FundamentalCache()
+                cache_items = []
+                for tck, entry in cache_mgr.cache.items():
+                    data = entry.get('data', {})
+                    # Build a display row from cached fundamentals
+                    rev = data.get('rev_growth')
+                    roe = data.get('roe')
+                    de = data.get('debt_equity')
+                    # Only include if we have some meaningful fundamentals
+                    if any([rev, roe, de]):
+                        cache_items.append({
+                            'Stock Symbol': tck,
+                            'Sector': data.get('sector', 'N/A'),
+                            'Market Cap': data.get('market_cap', 'N/A'),
+                            'Revenue Growth %': f"{rev*100:.1f}%" if rev else 'N/A',
+                            'Profit Growth %': 'N/A',
+                            'ROE %': f"{roe*100:.1f}%" if roe else 'N/A',
+                            'Debt to Equity': f"{de:.2f}" if de else 'N/A',
+                            'Long-Term Thesis (1–2 line summary)': 'Cached fundamental candidate',
+                            '_from_cache': True
+                        })
+
+                # Sort cache candidates by revenue growth or ROE
+                cache_items = sorted(cache_items, key=lambda x: (float(x['Revenue Growth %'].strip('%')) if x['Revenue Growth %'] != 'N/A' else 0,
+                                                                 float(x['ROE %'].strip('%')) if x['ROE %'] != 'N/A' else 0),
+                                     reverse=True)
+                return cache_items[:max_results]
+            except Exception:
+                return results[:max_results]
+
         return results[:max_results]
 
     @staticmethod
@@ -806,9 +920,11 @@ class AnalysisEngine:
             
             if not stats: return None
             
-            # Select best quarter: Must have > 70% probability AND > 2% median return
-            # This ensures consistency as requested by user.
-            valid_quarters = [s for s in stats if s['Probability'] >= 0.7 and s['MedianReturn'] >= 2.0]
+            # Select best quarter: Must have >= min probability AND >= min return
+            # These thresholds are configurable via ScannerConfig
+            valid_quarters = [s for s in stats 
+                            if s['Probability'] >= ScannerConfig.CYCLICAL_MIN_PROBABILITY 
+                            and s['MedianReturn'] >= ScannerConfig.CYCLICAL_MIN_RETURN]
             if not valid_quarters: return None
             
             best_stat = max(valid_quarters, key=lambda x: x['Probability'] * 10 + x['MedianReturn'])
@@ -860,9 +976,10 @@ class AnalysisEngine:
                     if res:
                         q = res['Quarter']
                         if len(quarterly_data[q]) < max_results_per_quarter:
-                            del res['Quarter'] # Cleanup
-                            del res['Score']
-                            quarterly_data[q].append(res)
+                            res_copy = res.copy() # Don't modify original
+                            del res_copy['Quarter'] # Cleanup
+                            del res_copy['Score']
+                            quarterly_data[q].append(res_copy)
             
             # REDUCED DELAY
             if i + batch_size < len(pool):
@@ -873,7 +990,7 @@ class AnalysisEngine:
     def _process_smc_stock(ticker, df):
         """Helper to process a single stock's SMC logic in parallel."""
         try:
-            if len(df) < 100: return None
+            if len(df) < ScannerConfig.SMC_MIN_ROWS: return None
             
             last = df.iloc[-1]
             prev = df.iloc[-2]
@@ -894,17 +1011,50 @@ class AnalysisEngine:
                 elif vol_spike > 200:
                     signal = "Ultra-High Volume Breakout"
                     
-                return {
+                score = int(min(100, max(0, 55 + vol_spike/4)))
+
+                # Attempt to fetch delivery percentage: prefer NSE API if available,
+                # otherwise try Yahoo Finance (note: Yahoo delivery is usually available EOD).
+                delivery_val = None
+                try:
+                    # Try NSE API implementation if project provides it
+                    from nse_api import get_delivery_percent
+                    delivery_raw = get_delivery_percent(ticker)
+                    if delivery_raw is not None:
+                        delivery_val = f"{float(delivery_raw):.1f}%"
+                except Exception:
+                    # Fallback to yfinance (best-effort; may be EOD only)
+                    try:
+                        import yfinance as yf
+                        yf_t = yf.Ticker(f"{ticker}.NS")
+                        info = yf_t.info if hasattr(yf_t, 'info') else {}
+                        # common possible keys
+                        for k in ('deliveryPercent', 'delivery_percent', 'delivery'):
+                            if isinstance(info, dict) and k in info and info[k] is not None:
+                                try:
+                                    delivery_val = f"{float(info[k]):.1f}% (Yahoo EOD)"
+                                    break
+                                except Exception:
+                                    continue
+                    except Exception:
+                        delivery_val = None
+
+                entry = {
                     "Stock Symbol": ticker,
                     "Current Price": f"₹{last['Close']:.2f}",
                     "Signal Type (Accumulation / Breakout / Absorption / Re-accumulation)": signal,
                     "Volume Spike %": f"{vol_spike:.1f}%",
-                    "Delivery %": "85% (Est)", 
                     "Institutional Activity (Yes/No + short note)": "Yes (Abnormal Volume detected)",
-                    "Smart Money Score (0–100)": int(min(98, 55 + vol_spike/4)),
+                    "Smart Money Score (0–100)": score,
                     "Signal Strength (Weak / Moderate / Strong)": "Strong" if vol_spike > 150 else "Moderate",
-                    "Score": int(min(98, 55 + vol_spike/4)) # Store for sorting
+                    "Score": score # Store for sorting
                 }
+
+                # Include delivery only if we were able to fetch a meaningful value
+                if delivery_val is not None:
+                    entry["Delivery %"] = delivery_val
+
+                return entry
         except Exception:
             pass
         return None
@@ -970,12 +1120,11 @@ class AnalysisEngine:
     def get_weinstein_scanner_stocks(ticker_pool, max_workers=10):
         """Deterministically classifies market into Weinstein Stages by Market Cap using batch processing."""
         from performance_utils import filter_by_market_cap
+        from concurrent.futures import ThreadPoolExecutor
         
         # 1000 Cr Market Cap Filter
         ticker_pool = filter_by_market_cap(ticker_pool, min_market_cap=10000000000)
         
-        stages = {"Stage 1 - Basing": [], "Stage 2 - Advancing": [], "Stage 3 - Top": [], "Stage 4 - Declining": []}
-        from concurrent.futures import ThreadPoolExecutor
         stages = {"Stage 1 - Basing": [], "Stage 2 - Advancing": [], "Stage 3 - Top": [], "Stage 4 - Declining": []}
         pool = list(ticker_pool)
         batch_size = 100
@@ -992,11 +1141,25 @@ class AnalysisEngine:
                     if res:
                         stage_name = res['Stage']
                         del res['Stage']
-                        # Match stage name to dictionary key
-                        for k in stages.keys():
-                            if k.split(" - ")[0] in stage_name:
-                                stages[k].append(res)
+                        # Match stage name to dictionary key with proper mapping
+                        stage_mapping = {
+                            "Stage 1": "Stage 1 - Basing",
+                            "Stage 2": "Stage 2 - Advancing",
+                            "Stage 3": "Stage 3 - Top",
+                            "Stage 4": "Stage 4 - Declining"
+                        }
+                        matched = False
+                        for stage_key, stage_full_name in stage_mapping.items():
+                            if stage_key in stage_name:
+                                stages[stage_full_name].append(res)
+                                matched = True
                                 break
+                        if not matched:
+                            # Fallback: Try to find match by first part
+                            for k in stages.keys():
+                                if k.split(" - ")[0] in stage_name:
+                                    stages[k].append(res)
+                                    break
             
             # REDUCED DELAY
             if i + batch_size < len(pool):

@@ -11,3 +11,8 @@ python-dotenv
 pytz
 psycopg2-binary
 sqlalchemy
+
+# Optional/fallback helpers
+beautifulsoup4
+lxml
+tqdm

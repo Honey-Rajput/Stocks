@@ -4,8 +4,75 @@ from plotly.subplots import make_subplots
 from analysis_engine import AnalysisEngine
 import pandas as pd
 from datetime import datetime
+try:
+    from zoneinfo import ZoneInfo
+    IST_TZ = ZoneInfo('Asia/Kolkata')
+except Exception:
+    try:
+        import pytz
+        IST_TZ = pytz.timezone('Asia/Kolkata')
+    except Exception:
+        IST_TZ = None
+
+
+def format_timestamp(dt):
+    """Format a datetime to IST 'HH:MM DD Mon' string.
+
+    - If dt is naive, assume UTC and convert to IST.
+    - If dt has tzinfo, convert to IST.
+    - If IST timezone unavailable, format using local time.
+    """
+    if dt is None:
+        return 'Unknown'
+
+    try:
+        # If it's a string, try parse
+        if isinstance(dt, str):
+            try:
+                dt = datetime.fromisoformat(dt)
+            except Exception:
+                pass
+
+        if not isinstance(dt, datetime):
+            return str(dt)
+
+        # If naive, assume UTC
+        if dt.tzinfo is None:
+            try:
+                # treat as UTC
+                from datetime import timezone
+                dt = dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                pass
+
+        # Convert to IST if possible
+        if IST_TZ is not None:
+            try:
+                dt_ist = dt.astimezone(IST_TZ)
+            except Exception:
+                dt_ist = dt
+        else:
+            dt_ist = dt
+
+        return dt_ist.strftime('%H:%M %d %b')
+    except Exception:
+        try:
+            return dt.strftime('%H:%M %d %b')
+        except Exception:
+            return str(dt)
 import time
 from db_utils import get_db_manager
+try:
+    from scan_display_utils import normalize_scanner_results
+except Exception:
+    normalize_scanner_results = None
+
+# Optional History UI integration (15-day)
+try:
+    from scanner_history_ui import show_all_scanners_history, compare_scanners_across_time
+except Exception:
+    show_all_scanners_history = None
+    compare_scanners_across_time = None
 
 # Page config
 st.set_page_config(page_title="Stock Market AI Agent", layout="wide", page_icon="📈")
@@ -126,6 +193,12 @@ selected_model = "gpt-5-nano-2025-08-07"
 # Scanner Performance Configuration (hidden from UI)
 max_workers = 4  # Reduced from 10 to prevent rate limiting
 max_scan_stocks = 500 # Reduced from 2200 to Nifty 500 size to prevent API 401/Crumb errors
+
+# --- Scanner controls (user-configurable) ---
+st.sidebar.header("Scanner Controls")
+scan_depth = st.sidebar.number_input("Scan Depth (max tickers)", min_value=50, max_value=2200, value=max_scan_stocks, step=50)
+min_mcap_cr = st.sidebar.selectbox("Min Market Cap (in Crore ₹)", options=[0, 100, 250, 500, 1000, 5000], index=4, help="Filter out small caps to speed scans and avoid noisy data")
+min_market_cap_value = int(min_mcap_cr * 1e7)  # Convert Crore to rupees (1 Cr = 1e7)
 
 # The nse_stocks_dict variable already contains the full live NSE list from EQUITY_L.csv
 # We will use this dynamically for all scanners.
@@ -442,7 +515,13 @@ if ticker:
             
             if cached_results:
                 st.success(f"✅ Loaded {len(cached_results)} stocks from Database (Last Updated: {last_updated.strftime('%H:%M %d %b')})")
-                display_df = pd.DataFrame(add_tradingview_column(cached_results))
+                # Normalize stored results to match live scan structure
+                try:
+                    norm = normalize_scanner_results('smc', cached_results) if normalize_scanner_results else cached_results
+                except Exception:
+                    norm = cached_results
+
+                display_df = pd.DataFrame(add_tradingview_column(norm))
                 st.dataframe(display_df, 
                              column_config={
                                  "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="symbol=NSE:(.*)"),
@@ -471,8 +550,15 @@ if ticker:
                         elapsed = time.time() - start_time
                         if sm_stocks:
                             status_text.success(f"✅ Found {len(sm_stocks)} stocks with institutional footprints in {elapsed:.1f}s")
-                            sm_stocks = add_tradingview_column(sm_stocks)
-                            st.dataframe(pd.DataFrame(sm_stocks), 
+                            # Normalize live results to same structure as stored
+                            try:
+                                norm_live = normalize_scanner_results('smc', sm_stocks) if normalize_scanner_results else sm_stocks
+                            except Exception:
+                                norm_live = sm_stocks
+
+                            norm_live = add_tradingview_column(norm_live)
+                            sm_df = pd.DataFrame(norm_live)
+                            st.dataframe(sm_df, 
                                          column_config={
                                              "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="symbol=NSE:(.*)"),
                                              "Score": None,
@@ -496,7 +582,12 @@ if ticker:
             
             if cached_results:
                 st.success(f"✅ Loaded {len(cached_results)} setups from Database (Last Updated: {last_updated.strftime('%H:%M %d %b')})")
-                display_df = pd.DataFrame(add_tradingview_column(cached_results))
+                try:
+                    norm = normalize_scanner_results('swing', cached_results) if normalize_scanner_results else cached_results
+                except Exception:
+                    norm = cached_results
+
+                display_df = pd.DataFrame(add_tradingview_column(norm))
                 st.dataframe(display_df, 
                              column_config={
                                  "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="symbol=NSE:(.*)"),
@@ -515,8 +606,8 @@ if ticker:
                 
                 with st.spinner("Analyzing NSE market trends for high-quality Swing setups..."):
                     try:
-                        all_tickers = list(nse_stocks_dict.values())[:max_scan_stocks]
-                        
+                        all_tickers = list(nse_stocks_dict.values())[:scan_depth]
+
                         # Progress callback
                         def update_progress(current, total, ticker):
                             progress = current / total
@@ -527,20 +618,26 @@ if ticker:
                             status_text.text(f"Scanned {current}/{total} stocks ({rate:.1f} stocks/sec) - ETA: {eta:.0f}s - Last: {ticker}")
                         
                         swing_stocks = AnalysisEngine.get_swing_stocks(
-                            all_tickers, 
+                            all_tickers,
                             interval=timeframe,
                             period=periods[timeframe],
-                            max_results=20, 
+                            max_results=20,
                             max_workers=max_workers,
-                            progress_callback=update_progress
+                            progress_callback=update_progress,
+                            min_market_cap=min_market_cap_value
                         )
                         
                         elapsed = time.time() - start_time
                         status_text.success(f"✅ Scan complete in {elapsed:.1f}s! Found {len(swing_stocks)} high-quality swing candidates.")
-                        
+
                         if swing_stocks:
-                            swing_stocks = add_tradingview_column(swing_stocks)
-                            st.dataframe(pd.DataFrame(swing_stocks), 
+                            try:
+                                norm_live = normalize_scanner_results('swing', swing_stocks) if normalize_scanner_results else swing_stocks
+                            except Exception:
+                                norm_live = swing_stocks
+
+                            norm_live = add_tradingview_column(norm_live)
+                            st.dataframe(pd.DataFrame(norm_live), 
                                          column_config={
                                              "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="symbol=NSE:(.*)"),
                                              "pct_change": None,
@@ -600,7 +697,19 @@ if ticker:
                             # Save to DB if scanned manually
                             db.save_results("long_term", lt_stocks)
                         else:
-                            status_text.warning("No stocks met the strict fundamental criteria.")
+                            # If we received cached candidates, show a clearer message
+                            from scanner_robustness import ScannerConfig
+                            if lt_stocks and any(isinstance(r, dict) and r.get('_from_cache') for r in lt_stocks):
+                                status_text.info("No live yFinance fundamentals available; showing cached fundamental candidates.")
+                                lt_stocks = add_tradingview_column(lt_stocks)
+                                st.dataframe(pd.DataFrame(lt_stocks), 
+                                             column_config={
+                                                 "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="symbol=NSE:(.*)")
+                                             },
+                                             use_container_width=True)
+                                db.save_results("long_term", lt_stocks)
+                            else:
+                                status_text.warning("No stocks met the strict fundamental criteria.")
                     except Exception as e:
                         st.error(f"Scanner error: {str(e)}")
 
@@ -768,3 +877,15 @@ if ticker:
         st.error(f"Error fetching data for {ticker}: {str(e)}")
 else:
     st.info("Enter a Ticker Symbol in the sidebar to start analysis.")
+
+# Quick-access Sidebar Button to open the 15-Day History UI (non-invasive)
+try:
+    if show_all_scanners_history is not None:
+        if st.sidebar.button("📊 View 15-Day History"):
+            # Streamlit will rerun and render the history UI in the current page
+            show_all_scanners_history()
+except Exception:
+    try:
+        st.sidebar.write("History UI unavailable")
+    except Exception:
+        pass
