@@ -205,7 +205,7 @@ def filter_by_market_cap(ticker_pool: List[str], min_market_cap: float = 1000000
     Returns:
         Filtered list of tickers
     """
-    import yfinance as yf
+    import data_provider as yf
     
     def check_mcap(ticker):
         try:
@@ -228,7 +228,7 @@ def filter_by_market_cap(ticker_pool: List[str], min_market_cap: float = 1000000
 
 def is_market_cap_ok(ticker: str, min_market_cap: float = 10000000000) -> bool:
     """Check if single stock meets market cap requirement (Default 1000 Cr)."""
-    import yfinance as yf
+    import data_provider as yf
     try:
         full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
         t = yf.Ticker(full_ticker)
@@ -241,7 +241,7 @@ def batch_download_data(tickers: List[str], period: str = '60d', interval: str =
     Download data for multiple tickers in a single batch to improve performance.
     Includes retry logic and individual ticker fallback for robustness.
     """
-    import yfinance as yf
+    import data_provider as yf
     import pandas as pd
     import requests
     
@@ -268,29 +268,29 @@ def batch_download_data(tickers: List[str], period: str = '60d', interval: str =
                 threads=False,
                 timeout=40 
             )
-            
-            if data is None or data.empty:
-                # Move to individual fallback
-                break
 
-            # Standardize: Always treat as MultiIndex if possible, or handle single column
-            if isinstance(data.columns, pd.MultiIndex):
-                # Tickers are in the first level
-                for ticker_symbol in data.columns.get_level_values(0).unique():
-                    ticker_df = data[ticker_symbol]
-                    if isinstance(ticker_df, pd.DataFrame):
-                        ticker_df = ticker_df.dropna(subset=['Close'])
-                        if not ticker_df.empty and len(ticker_df) >= 20:
-                            clean_name = str(ticker_symbol).replace(".NS", "")
-                            results[clean_name] = ticker_df
-            else:
-                # Single ticker, non-MultiIndex (happens with 1 ticker sometimes)
-                df = data.dropna(subset=['Close'])
-                if not df.empty and len(df) >= 20:
-                    # Use the first requested ticker as key
-                    clean_name = formatted_tickers[0].replace(".NS", "")
-                    results[clean_name] = df
-            
+            # data_provider.download may return a dict mapping tickers -> DataFrame,
+            # or a DataFrame for single-ticker requests. Handle both.
+            if isinstance(data, dict):
+                for ticker_symbol, ticker_df in data.items():
+                    try:
+                        if isinstance(ticker_df, pd.DataFrame):
+                            ticker_df = ticker_df.dropna(subset=['Close'])
+                            if not ticker_df.empty and len(ticker_df) >= 20:
+                                clean_name = str(ticker_symbol).replace(".NS", "")
+                                results[clean_name] = ticker_df
+                    except Exception:
+                        continue
+            elif isinstance(data, pd.DataFrame):
+                # Single ticker case
+                try:
+                    df = data.dropna(subset=['Close'])
+                    if not df.empty and len(df) >= 20:
+                        clean_name = formatted_tickers[0].replace(".NS", "")
+                        results[clean_name] = df
+                except Exception:
+                    pass
+
             # If we got results, return them
             if results:
                 return results

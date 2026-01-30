@@ -1,4 +1,4 @@
-import yfinance as yf
+import data_provider as yf
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
@@ -1025,14 +1025,15 @@ class AnalysisEngine:
                 except Exception:
                     # Fallback to yfinance (best-effort; may be EOD only)
                     try:
-                        import yfinance as yf
+                        # Use local data provider as fallback instead of yfinance
+                        import data_provider as yf
                         yf_t = yf.Ticker(f"{ticker}.NS")
                         info = yf_t.info if hasattr(yf_t, 'info') else {}
-                        # common possible keys
+                        # common possible keys from providers
                         for k in ('deliveryPercent', 'delivery_percent', 'delivery'):
                             if isinstance(info, dict) and k in info and info[k] is not None:
                                 try:
-                                    delivery_val = f"{float(info[k]):.1f}% (Yahoo EOD)"
+                                    delivery_val = f"{float(info[k]):.1f}% (Provider)"
                                     break
                                 except Exception:
                                     continue

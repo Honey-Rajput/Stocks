@@ -700,7 +700,7 @@ if ticker:
                             # If we received cached candidates, show a clearer message
                             from scanner_robustness import ScannerConfig
                             if lt_stocks and any(isinstance(r, dict) and r.get('_from_cache') for r in lt_stocks):
-                                status_text.info("No live yFinance fundamentals available; showing cached fundamental candidates.")
+                                status_text.info("No live fundamentals available; showing cached fundamental candidates.")
                                 lt_stocks = add_tradingview_column(lt_stocks)
                                 st.dataframe(pd.DataFrame(lt_stocks), 
                                              column_config={
