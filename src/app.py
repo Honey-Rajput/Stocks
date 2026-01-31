@@ -4,6 +4,9 @@ from plotly.subplots import make_subplots
 from analysis_engine import AnalysisEngine
 import pandas as pd
 from datetime import datetime
+import hashlib
+import time
+
 try:
     from zoneinfo import ZoneInfo
     IST_TZ = ZoneInfo('Asia/Kolkata')
@@ -60,7 +63,7 @@ def format_timestamp(dt):
             return dt.strftime('%H:%M %d %b')
         except Exception:
             return str(dt)
-import time
+
 from db_utils import get_db_manager
 try:
     from scan_display_utils import normalize_scanner_results
@@ -77,41 +80,57 @@ except Exception:
 # Page config
 st.set_page_config(page_title="Stock Market AI Agent", layout="wide", page_icon="📈")
 
-# Custom CSS for "Premium" look
-st.markdown("""
+# Force refresh cache
+CACHE_BUSTER = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
+
+# Add cache buster to title
+st.title(f"🚀 Stock Market AI Agent - v2.0")
+
+# Custom CSS for "Premium" look (v2.1)
+st.markdown(f"""
     <style>
-    .main {
+    .main {{
         background-color: #0e1117;
-    }
-    .stMetric {
+    }}
+    .stMetric {{
         background: rgba(255, 255, 255, 0.05);
         padding: 15px;
         border-radius: 10px;
         border: 1px solid rgba(255, 255, 255, 0.1);
-    }
-    .status-card {
+    }}
+    .status-card {{
         padding: 20px;
         border-radius: 12px;
         margin-bottom: 15px;
         border: 1px solid rgba(255, 255, 255, 0.1);
-    }
-    .bullish { background-color: rgba(16, 185, 129, 0.1); border-left: 5px solid #10b981; }
-    .bearish { background-color: rgba(239, 68, 68, 0.1); border-left: 5px solid #ef4444; }
-    .sideways { background-color: rgba(107, 114, 128, 0.1); border-left: 5px solid #6b7280; }
+    }}
+    .bullish {{ background-color: rgba(16, 185, 129, 0.1); border-left: 5px solid #10b981; }}
+    .bearish {{ background-color: rgba(239, 68, 68, 0.1); border-left: 5px solid #ef4444; }}
+    .sideways {{ background-color: rgba(107, 114, 128, 0.1); border-left: 5px solid #6b7280; }}
     
     /* Wrap tab text */
-    button[data-baseweb="tab"] p {
+    button[data-baseweb="tab"] p {{
         white-space: normal !important;
         text-align: center !important;
         line-height: 1.2 !important;
         font-size: 14px !important;
-    }
-    button[data-baseweb="tab"] {
+    }}
+    button[data-baseweb="tab"] {{
         height: auto !important;
         min-height: 40px !important;
         padding-top: 5px !important;
         padding-bottom: 5px !important;
-    }
+    }}
+    
+    /* New UI element styling */
+    .version-tag {{
+        background-color: #10b981;
+        color: white;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: bold;
+    }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -164,6 +183,8 @@ stock_options = sorted(list(nse_stocks_dict.keys()))
 
 # Sidebar
 st.sidebar.title("🛠️ Agent")
+st.sidebar.markdown(f"*Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+st.sidebar.markdown('<div class="version-tag">UI v2.1</div>', unsafe_allow_html=True)
 
 # Consolidated stock selection (Ticker and Name in "One Place")
 selected_stock_str = st.sidebar.selectbox("Select Stock (Ticker or Name)", 
@@ -210,10 +231,12 @@ periods = {
     "4h": "730d", "1d": "max", "1wk": "max", "1mo": "max"
 }
 
-st.title("🚀 Stock Market AI Agent")
 # Add TradingView link for the selected stock
 clean_header_ticker = ticker.replace(".NS", "")
 st.markdown(f"### Analyzing: {selected_stock_str} | [View Chart 📈](https://www.tradingview.com/chart/?symbol=NSE:{clean_header_ticker})")
+
+# Version indicator
+st.markdown("#### App Version: 2.1 - Updated UI")
 
 if ticker:
     try:
@@ -426,6 +449,9 @@ if ticker:
             st.subheader("🚀 High-Confidence Market Opportunities")
             st.info("The agent is currently screening the Top NSE stocks for immediate opportunities based on technical alignment.")
             
+            # List of some liquid NSE tickers for screening
+            top_nse_tickers = list(nse_stocks_dict.values())[:50]  # Use first 50 from NSE list
+            
             if st.button("🔍 Run Multi-Stock Scanner"):
                 opps = {"buys": [], "sells": []}
                 progress_container = st.empty()
@@ -540,11 +566,22 @@ if ticker:
                 
                 with st.spinner("Monitoring institutional footprints across NSE..."):
                     try:
-                        all_tickers = list(nse_stocks_dict.values())[:max_scan_stocks]
+                        all_tickers = list(nse_stocks_dict.values())[:scan_depth]
+                        
+                        # Progress callback
+                        def update_progress(current, total, ticker):
+                            progress = current / total
+                            progress_bar.progress(progress)
+                            elapsed = time.time() - start_time
+                            rate = current / elapsed if elapsed > 0 else 0
+                            eta = (total - current) / rate if rate > 0 else 0
+                            status_text.text(f"Scanned {current}/{total} stocks ({rate:.1f} stocks/sec) - ETA: {eta:.0f}s - Last: {ticker}")
+                        
                         sm_stocks = AnalysisEngine.get_smart_money_stocks(
                             all_tickers,
                             max_results=20,
-                            max_workers=max_workers
+                            max_workers=max_workers,
+                            progress_callback=update_progress
                         )
                         
                         elapsed = time.time() - start_time
@@ -678,11 +715,22 @@ if ticker:
                 
                 with st.spinner("Evaluating NSE company fundamentals (this may take a moment)..."):
                     try:
-                        all_tickers = list(nse_stocks_dict.values())[:max_scan_stocks]
+                        all_tickers = list(nse_stocks_dict.values())[:scan_depth]
+                        
+                        # Progress callback
+                        def update_progress(current, total, ticker):
+                            progress = current / total
+                            progress_bar.progress(progress)
+                            elapsed = time.time() - start_time
+                            rate = current / elapsed if elapsed > 0 else 0
+                            eta = (total - current) / rate if rate > 0 else 0
+                            status_text.text(f"Scanned {current}/{total} stocks ({rate:.1f} stocks/sec) - ETA: {eta:.0f}s - Last: {ticker}")
+                        
                         lt_stocks = AnalysisEngine.get_long_term_stocks(
                             all_tickers,
                             max_results=20,
-                            max_workers=max_workers
+                            max_workers=max_workers,
+                            progress_callback=update_progress
                         )
                         
                         elapsed = time.time() - start_time
@@ -737,11 +785,22 @@ if ticker:
                 with st.spinner("Calculating 10-year seasonal return probabilities for NSE stocks..."):
                     try:
                         st.info("Scanning for seasonal patterns (this may take a minute)...")
-                        all_tickers = list(nse_stocks_dict.values())[:max_scan_stocks]
+                        all_tickers = list(nse_stocks_dict.values())[:scan_depth]
+                        
+                        # Progress callback
+                        def update_progress(current, total, ticker):
+                            progress = current / total
+                            progress_bar.progress(progress)
+                            elapsed = time.time() - start_time
+                            rate = current / elapsed if elapsed > 0 else 0
+                            eta = (total - current) / rate if rate > 0 else 0
+                            status_text.text(f"Scanned {current}/{total} stocks ({rate:.1f} stocks/sec) - ETA: {eta:.0f}s - Last: {ticker}")
+                        
                         cyclical_groups = AnalysisEngine.get_cyclical_stocks_by_quarter(
                             all_tickers,
                             max_results_per_quarter=15,
-                            max_workers=8  # Lower workers for data-heavy operation
+                            max_workers=8,  # Lower workers for data-heavy operation
+                            progress_callback=update_progress
                         )
                         # Save to DB if scanned manually
                         db.save_results("cyclical", cyclical_groups)
@@ -829,10 +888,21 @@ if ticker:
                 with st.spinner("Classifying market into Weinstein Stages (1-4)..."):
                     try:
                         st.info("Running market-wide stage classification...")
-                        all_tickers = list(nse_stocks_dict.values())[:max_scan_stocks]
+                        all_tickers = list(nse_stocks_dict.values())[:scan_depth]
+                        
+                        # Progress callback
+                        def update_progress(current, total, ticker):
+                            progress = current / total
+                            progress_bar.progress(progress)
+                            elapsed = time.time() - start_time
+                            rate = current / elapsed if elapsed > 0 else 0
+                            eta = (total - current) / rate if rate > 0 else 0
+                            status_text.text(f"Scanned {current}/{total} stocks ({rate:.1f} stocks/sec) - ETA: {eta:.0f}s - Last: {ticker}")
+                        
                         stage_results = AnalysisEngine.get_weinstein_scanner_stocks(
                             all_tickers,
-                            max_workers=max_workers
+                            max_workers=max_workers,
+                            progress_callback=update_progress
                         )
                         db.save_results("stage_analysis", stage_results)
                         
@@ -889,3 +959,7 @@ except Exception:
         st.sidebar.write("History UI unavailable")
     except Exception:
         pass
+
+# Refresh button
+if st.sidebar.button("🔄 Refresh App"):
+    st.rerun()

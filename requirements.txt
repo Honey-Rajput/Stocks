@@ -10,6 +10,7 @@ python-dotenv
 pytz
 psycopg2-binary
 sqlalchemy
+yfinance
 
 # Optional/fallback helpers
 beautifulsoup4
