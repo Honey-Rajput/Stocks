@@ -217,12 +217,12 @@ use_ai = True
 selected_model = "gpt-5-nano-2025-08-07"
 
 # Scanner Performance Configuration (hidden from UI)
-max_workers = 4  # Reduced from 10 to prevent rate limiting
-max_scan_stocks = 500 # Reduced from 2200 to Nifty 500 size to prevent API 401/Crumb errors
+max_workers = 25  # Increased for batch processing
+max_scan_stocks = 2000 # Increased to support 1500+ stocks per user request
 
 # --- Scanner controls (user-configurable) ---
 st.sidebar.header("Scanner Controls")
-scan_depth = st.sidebar.number_input("Scan Depth (max tickers)", min_value=50, max_value=2200, value=max_scan_stocks, step=50)
+scan_depth = st.sidebar.number_input("Scan Depth (max tickers)", min_value=50, max_value=2500, value=1500, step=50)
 min_mcap_cr = st.sidebar.selectbox("Min Market Cap (in Crore ₹)", options=[0, 100, 250, 500, 1000, 5000], index=4, help="Filter out small caps to speed scans and avoid noisy data")
 min_market_cap_value = int(min_mcap_cr * 1e7)  # Convert Crore to rupees (1 Cr = 1e7)
 
@@ -878,6 +878,7 @@ if ticker:
             db = get_db_manager()
             cached_results, last_updated = db.get_results("stage_analysis")
             
+            
             if cached_results:
                 st.success(f"✅ Loaded Market Stages from Database (Last Updated: {last_updated.strftime('%H:%M %d %b')})")
                 stage_results = cached_results
@@ -915,39 +916,43 @@ if ticker:
                         elapsed = time.time() - start_time
                         total_found = sum(len(v) for v in stage_results.values())
                         status_text.success(f"✅ Stage classification complete in {elapsed:.1f}s. Found {total_found} stocks.")
-                        
-                        s_tabs = st.tabs(["🏗️ Stage 1", "🚀 Stage 2", "📉 Stage 3", "💀 Stage 4"])
-                        
-                        with s_tabs[0]:
-                            if stage_results["Stage 1 - Basing"]:
-                                s1 = add_tradingview_column(stage_results["Stage 1 - Basing"])
-                                st.dataframe(pd.DataFrame(s1), 
-                                             column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
-                                             use_container_width=True)
-                            else: st.info("No stocks currently in the basing stage.")
-                        with s_tabs[1]:
-                            if stage_results["Stage 2 - Advancing"]:
-                                s2 = add_tradingview_column(stage_results["Stage 2 - Advancing"])
-                                st.dataframe(pd.DataFrame(s2), 
-                                             column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
-                                             use_container_width=True)
-                            else: st.info("No stocks currently in the advancing stage.")
-                        with s_tabs[2]:
-                            if stage_results["Stage 3 - Top"]:
-                                s3 = add_tradingview_column(stage_results["Stage 3 - Top"])
-                                st.dataframe(pd.DataFrame(s3), 
-                                             column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
-                                             use_container_width=True)
-                            else: st.info("No stocks currently in the top/distribution stage.")
-                        with s_tabs[3]:
-                            if stage_results["Stage 4 - Declining"]:
-                                s4 = add_tradingview_column(stage_results["Stage 4 - Declining"])
-                                st.dataframe(pd.DataFrame(s4), 
-                                             column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
-                                             use_container_width=True)
-                            else: st.info("No stocks currently in the declining stage.")
                     except Exception as e:
                         st.error(f"Scanner error: {str(e)}")
+                        stage_results = None
+            
+            # 3. Display Results (persists after button click)
+            if stage_results:
+                st.markdown("---")
+                s_tabs = st.tabs(["🏗️ Stage 1", "🚀 Stage 2", "📉 Stage 3", "💀 Stage 4"])
+                
+                with s_tabs[0]:
+                    if stage_results.get("Stage 1 - Basing"):
+                        s1 = add_tradingview_column(stage_results["Stage 1 - Basing"])
+                        st.dataframe(pd.DataFrame(s1), 
+                                     column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
+                                     use_container_width=True)
+                    else: st.info("No stocks currently in the basing stage.")
+                with s_tabs[1]:
+                    if stage_results.get("Stage 2 - Advancing"):
+                        s2 = add_tradingview_column(stage_results["Stage 2 - Advancing"])
+                        st.dataframe(pd.DataFrame(s2), 
+                                     column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
+                                     use_container_width=True)
+                    else: st.info("No stocks currently in the advancing stage.")
+                with s_tabs[2]:
+                    if stage_results.get("Stage 3 - Top"):
+                        s3 = add_tradingview_column(stage_results["Stage 3 - Top"])
+                        st.dataframe(pd.DataFrame(s3), 
+                                     column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
+                                     use_container_width=True)
+                    else: st.info("No stocks currently in the top/distribution stage.")
+                with s_tabs[3]:
+                    if stage_results.get("Stage 4 - Declining"):
+                        s4 = add_tradingview_column(stage_results["Stage 4 - Declining"])
+                        st.dataframe(pd.DataFrame(s4), 
+                                     column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
+                                     use_container_width=True)
+                    else: st.info("No stocks currently in the declining stage.")
         
         # ===== Tab 12: 15-Day History =====
         with tab12:

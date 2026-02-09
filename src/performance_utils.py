@@ -238,16 +238,16 @@ def is_market_cap_ok(ticker: str, min_market_cap: float = 10000000000) -> bool:
         return False
 def batch_download_data(tickers: List[str], period: str = '60d', interval: str = '1d') -> Dict[str, Any]:
     """
-    Download data for multiple tickers in a single batch to improve performance.
-    Includes retry logic and individual ticker fallback for robustness.
+    Download data for multiple tickers in batches to improve performance.
+    Chunked to 500 tickers to respect API limits and memory.
     """
     import data_provider as yf
     import pandas as pd
+    import yfinance as real_yf
     import time
-    
-    # Ensure deterministic processing by sorting tickers
+
+    # Ensure deterministic processing
     tickers = sorted(list(set(tickers)))
-    # Ensure all tickers have .NS suffix for NSE
     formatted_tickers = [f"{t}.NS" if not t.endswith(".NS") else t for t in tickers]
     
     if not formatted_tickers:
@@ -255,94 +255,51 @@ def batch_download_data(tickers: List[str], period: str = '60d', interval: str =
         
     results = {}
     
-    # Try using yfinance directly for batch download first
-    try:
-        import yfinance as real_yf
-        # Try batch download with yfinance directly
-        data = real_yf.download(
-            formatted_tickers,
-            period=period,
-            interval=interval,
-            auto_adjust=True,
-            group_by='ticker',
-            progress=False,
-            threads=False,
-            timeout=40
-        )
-        
-        # Handle yfinance batch download response
-        if isinstance(data, dict):
-            for ticker_symbol, ticker_df in data.items():
-                try:
-                    if isinstance(ticker_df, pd.DataFrame) and not ticker_df.empty:
-                        # Handle MultiIndex columns
-                        if isinstance(ticker_df.columns, pd.MultiIndex):
-                            ticker_df.columns = ticker_df.columns.get_level_values(0)
-                        ticker_df = ticker_df.dropna(subset=['Close'])
-                        if not ticker_df.empty and len(ticker_df) >= 20:
-                            clean_name = str(ticker_symbol).replace(".NS", "")
-                            results[clean_name] = ticker_df
-                except Exception:
-                    continue
-        elif isinstance(data, pd.DataFrame) and not data.empty:
-            # Single ticker case or all tickers in one DataFrame
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = data.columns.get_level_values(0)
-            data = data.dropna(subset=['Close'])
-            if not data.empty and len(data) >= 20:
-                # If only one ticker was requested
-                if len(formatted_tickers) == 1:
-                    clean_name = formatted_tickers[0].replace(".NS", "")
-                    results[clean_name] = data
-                else:
-                    # Multiple tickers but returned as single DataFrame
-                    # This shouldn't happen with group_by='ticker' but handle it
-                    for ticker in formatted_tickers:
-                        clean_name = ticker.replace(".NS", "")
-                        results[clean_name] = data
-        
-        # If batch download worked, return results
-        if results:
-            return results
-    except Exception as e:
-        # Batch download failed, fall through to individual downloads
-        pass
+    # Chunk tickers into batches of 300 (safer than 500 for heavy data)
+    chunk_size = 300
+    chunks = [formatted_tickers[i:i + chunk_size] for i in range(0, len(formatted_tickers), chunk_size)]
     
-    # Fallback: Download tickers individually using data_provider (which checks cache first)
-    for ticker in formatted_tickers:
+    for i, chunk in enumerate(chunks):
         try:
-            df = yf.download(
-                ticker,
+            # print(f"Downloading batch {i+1}/{len(chunks)} ({len(chunk)} stocks)...")
+            data = real_yf.download(
+                chunk,
                 period=period,
                 interval=interval,
                 auto_adjust=True,
+                group_by='ticker',
                 progress=False,
-                timeout=20
+                threads=True, 
+                timeout=60
             )
             
-            # data_provider returns DataFrame for single ticker
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                # Handle MultiIndex columns
-                if isinstance(df.columns, pd.MultiIndex):
-                    df.columns = df.columns.get_level_values(0)
-                df = df.dropna(subset=['Close'])
-                if not df.empty and len(df) >= 20:
-                    clean_name = ticker.replace(".NS", "")
-                    results[clean_name] = df
-            elif isinstance(df, dict):
-                # If it returns a dict, get the first value
-                for key, val in df.items():
-                    if isinstance(val, pd.DataFrame) and not val.empty:
-                        if isinstance(val.columns, pd.MultiIndex):
-                            val.columns = val.columns.get_level_values(0)
-                        val = val.dropna(subset=['Close'])
-                        if not val.empty and len(val) >= 20:
-                            clean_name = key.replace(".NS", "")
-                            results[clean_name] = val
-                        break
-                    
-        except Exception:
-            # Skip this ticker and continue
+            # Handle multi-ticker data structure
+            if isinstance(data, pd.DataFrame) and isinstance(data.columns, pd.MultiIndex):
+                # Iterate through level 0 (Tickers)
+                for ticker in data.columns.levels[0]:
+                    try:
+                        ticker_df = data[ticker].dropna(how='all')
+                        # Check for sufficient data
+                        if not ticker_df.empty and len(ticker_df) >= 20: 
+                            clean_name = str(ticker).replace(".NS", "")
+                            # Standardize columns if needed (yfinance usually returns Open, High, Low, Close, Volume)
+                            results[clean_name] = ticker_df
+                    except Exception:
+                        continue
+            
+            # Handle single ticker returned as standard DataFrame
+            elif isinstance(data, pd.DataFrame) and not data.empty:
+               if len(chunk) == 1:
+                   clean_name = chunk[0].replace(".NS", "")
+                   results[clean_name] = data
+               
+        except Exception as e:
+            # print(f"Batch {i+1} failed: {e}")
+            # Fallback for this chunk: slow individual download
             pass
-    
+        
+        # Small sleep between chunks
+        if len(chunks) > 1:
+            time.sleep(1.0)
+            
     return results

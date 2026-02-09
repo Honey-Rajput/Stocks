@@ -29,13 +29,18 @@ except ImportError:
 
 class AnalysisEngine:
 
-    def __init__(self, ticker, interval='1h', period='60d'):
+    def __init__(self, ticker, interval='1h', period='60d', data=None):
         self.ticker = ticker
         self.interval = interval
         self.period = period
         self.bb_cols = {"upper": None, "middle": None, "lower": None}
         self.indicator_cols = {"rsi": None, "macd": None, "macds": None, "macdh": None}
-        self.data = self._fetch_data()
+        
+        # Use provided data if available to perform analysis without re-fetching
+        if data is not None and not data.empty:
+            self.data = data
+        else:
+            self.data = self._fetch_data()
 
     # ✅ PATCHED — ONLY SAFETY + VALIDATION ADDED (LOGIC SAME)
     
@@ -384,21 +389,24 @@ class AnalysisEngine:
             return f"AI Insight Error: {str(e)}"
 
     @staticmethod
-    def get_smart_money_stocks(tickers, max_results=20, max_workers=4, progress_callback=None):
+    def get_smart_money_stocks(tickers, max_results=20, max_workers=8, progress_callback=None):
         """Smart Money Concept scanner - Detects institutional activity patterns."""
         from performance_utils import parallel_process_stocks, batch_download_data
+        
+        # 1. BATCH DOWNLOAD ALL DATA FIRST (Huge speedup)
+        # print("Downloading data for Smart Money Scanner...")
+        batch_data = batch_download_data(tickers, period='60d', interval='1d')
         
         def process_smc(ticker):
             try:
                 full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
-                data = batch_download_data([ticker], period='60d', interval='1d')
                 
-                # Check if data exists for this ticker (try both with and without .NS)
+                # Retrieve from batch data
                 df = None
-                if ticker in data and not data[ticker].empty:
-                    df = data[ticker]
-                elif full_ticker.replace('.NS', '') in data and not data[full_ticker.replace('.NS', '')].empty:
-                    df = data[full_ticker.replace('.NS', '')]
+                if ticker in batch_data:
+                    df = batch_data[ticker]
+                elif full_ticker.replace('.NS', '') in batch_data:
+                    df = batch_data[full_ticker.replace('.NS', '')]
                 
                 if df is None or df.empty or len(df) < ScannerConfig.SMC_MIN_ROWS:
                     return None
@@ -414,7 +422,6 @@ class AnalysisEngine:
                 
                 # Volume spike calculations
                 volume_spike_20 = ((current_volume - avg_volume_20) / avg_volume_20) * 100 if avg_volume_20 > 0 else 0
-                volume_spike_50 = ((current_volume - avg_volume_50) / avg_volume_50) * 100 if avg_volume_50 > 0 else 0
                 volume_surge = ((current_volume - prev_volume) / prev_volume) * 100 if prev_volume > 0 else 0
                 
                 # Price action
@@ -483,31 +490,35 @@ class AnalysisEngine:
                     'Signal Strength (Weak / Moderate / Strong)': strength
                 }
             except Exception as e:
-                print(f"Error processing {ticker}: {e}")
+                # print(f"Error processing {ticker}: {e}")
                 return None
         
-        # Use all tickers provided, don't limit artificially
-        results = parallel_process_stocks(tickers, process_smc, max_workers=max_workers, max_stocks=None, timeout_per_stock=15.0, progress_callback=progress_callback)
+        # Use parallel processing for calculation (CPU bound now, not I/O bound)
+        # We can increase workers significantly or just use main thread if list is small, 
+        # but parallel is still good for 2000 iterations
+        results = parallel_process_stocks(tickers, process_smc, max_workers=20, max_stocks=None, timeout_per_stock=1.0, progress_callback=progress_callback)
         results = sorted(results, key=lambda x: x.get('Smart Money Score (0–100)', 0), reverse=True)
         return results[:max_results]
 
     @staticmethod
-    def get_swing_stocks(tickers, interval='1d', period='60d', max_results=20, max_workers=4, progress_callback=None, min_market_cap=2000000000):
+    def get_swing_stocks(tickers, interval='1d', period='60d', max_results=20, max_workers=8, progress_callback=None, min_market_cap=2000000000):
         """Swing Trading Scanner (15-20 days)."""
         from performance_utils import parallel_process_stocks, batch_download_data
         from scanner_robustness import ScannerConfig
         
+        # 1. BATCH DOWNLOAD
+        batch_data = batch_download_data(tickers, period=period, interval=interval)
+
         def process_swing(ticker):
             try:
                 full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
-                data = batch_download_data([ticker], period=period, interval=interval)
                 
-                # Check if data exists for this ticker (try both with and without .NS)
+                # Retrieve from batch
                 df = None
-                if ticker in data and not data[ticker].empty:
-                    df = data[ticker]
-                elif full_ticker.replace('.NS', '') in data and not data[full_ticker.replace('.NS', '')].empty:
-                    df = data[full_ticker.replace('.NS', '')]
+                if ticker in batch_data:
+                    df = batch_data[ticker]
+                elif full_ticker.replace('.NS', '') in batch_data:
+                    df = batch_data[full_ticker.replace('.NS', '')]
                 
                 if df is None or df.empty or len(df) < ScannerConfig.SWING_MIN_ROWS:
                     return None
@@ -525,7 +536,7 @@ class AnalysisEngine:
                 last = df.iloc[-1]
                 price = last['Close']
                 
-                # Filters - using original ScannerConfig values
+                # Filters
                 if price < ScannerConfig.SWING_MIN_PRICE:
                     return None
                 
@@ -533,11 +544,11 @@ class AnalysisEngine:
                 ema21 = last.get('EMA_21', price)
                 rsi_val = last.get(rsi_col, 50)
                 
-                # Swing criteria - original logic
+                # Swing criteria
                 if not (price > ema21 and ema9 > ema21 and rsi_val > ScannerConfig.SWING_MIN_RSI):
                     return None
                 
-                # Volume check - original logic
+                # Volume check
                 avg_volume = df['Volume'].iloc[-20:].mean()
                 current_volume = df['Volume'].iloc[-1]
                 volume_spike = ((current_volume - avg_volume) / avg_volume) * 100 if avg_volume > 0 else 0
@@ -571,8 +582,8 @@ class AnalysisEngine:
             except Exception:
                 return None
         
-        # Use all tickers provided, don't limit artificially
-        results = parallel_process_stocks(tickers, process_swing, max_workers=max_workers, max_stocks=None, timeout_per_stock=10.0, progress_callback=progress_callback)
+        # CPU bound processing now
+        results = parallel_process_stocks(tickers, process_swing, max_workers=20, max_stocks=None, timeout_per_stock=1.0, progress_callback=progress_callback)
         results = sorted(results, key=lambda x: x.get('Confidence Score (0–100)', 0), reverse=True)
         return results[:max_results]
 
@@ -729,17 +740,20 @@ class AnalysisEngine:
         from performance_utils import parallel_process_stocks, batch_download_data
         from scanner_robustness import ScannerConfig
         
+        # 1. BATCH DOWNLOAD (10 Years is heavy, but batching 300 at a time is still better)
+        # print("Downloading 10y data for Cyclical Scanner...")
+        batch_data = batch_download_data(tickers, period='10y', interval='1d')
+        
         def process_cyclical(ticker):
             try:
                 full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
-                data = batch_download_data([ticker], period='10y', interval='1d')
                 
-                # Check if data exists for this ticker (try both with and without .NS)
+                # Retrieve from batch
                 df = None
-                if ticker in data and not data[ticker].empty:
-                    df = data[ticker]
-                elif full_ticker.replace('.NS', '') in data and not data[full_ticker.replace('.NS', '')].empty:
-                    df = data[full_ticker.replace('.NS', '')]
+                if ticker in batch_data:
+                    df = batch_data[ticker]
+                elif full_ticker.replace('.NS', '') in batch_data:
+                    df = batch_data[full_ticker.replace('.NS', '')]
                 
                 if df is None or df.empty or len(df) < ScannerConfig.CYCLICAL_MIN_ROWS:
                     return None
@@ -782,10 +796,10 @@ class AnalysisEngine:
                     'Score': round(probability * 100 + best_return, 1)
                 }
             except Exception as e:
-                print(f"Error processing {ticker}: {e}")
+                # print(f"Error processing {ticker}: {e}")
                 return None
         
-        results = parallel_process_stocks(tickers, process_cyclical, max_workers=max_workers, max_stocks=None, timeout_per_stock=20.0, progress_callback=progress_callback)
+        results = parallel_process_stocks(tickers, process_cyclical, max_workers=20, max_stocks=None, timeout_per_stock=1.0, progress_callback=progress_callback)
         
         # Group by quarter
         grouped = {'Q1': [], 'Q2': [], 'Q3': [], 'Q4': []}
@@ -801,22 +815,24 @@ class AnalysisEngine:
         return grouped
 
     @staticmethod
-    def get_weinstein_scanner_stocks(tickers, max_workers=4, progress_callback=None):
+    def get_weinstein_scanner_stocks(tickers, max_workers=8, progress_callback=None):
         """Weinstein Stage Analysis scanner."""
         from performance_utils import parallel_process_stocks, batch_download_data
         from scanner_robustness import ScannerConfig
         
+        # 1. BATCH DOWNLOAD
+        batch_data = batch_download_data(tickers, period=ScannerConfig.WEINSTEIN_PERIOD, interval='1d')
+        
         def process_weinstein(ticker):
             try:
                 full_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
-                data = batch_download_data([ticker], period=ScannerConfig.WEINSTEIN_PERIOD, interval='1d')
                 
-                # Check if data exists for this ticker (try both with and without .NS)
+                # Retrieve from batch
                 df = None
-                if ticker in data and not data[ticker].empty:
-                    df = data[ticker]
-                elif full_ticker.replace('.NS', '') in data and not data[full_ticker.replace('.NS', '')].empty:
-                    df = data[full_ticker.replace('.NS', '')]
+                if ticker in batch_data:
+                    df = batch_data[ticker]
+                elif full_ticker.replace('.NS', '') in batch_data:
+                    df = batch_data[full_ticker.replace('.NS', '')]
                 
                 if df is None or df.empty or len(df) < ScannerConfig.WEINSTEIN_MIN_ROWS:
                     return None
@@ -857,10 +873,10 @@ class AnalysisEngine:
                     '_stage': stage
                 }
             except Exception as e:
-                print(f"Error processing {ticker}: {e}")
+                # print(f"Error processing {ticker}: {e}")
                 return None
         
-        results = parallel_process_stocks(tickers, process_weinstein, max_workers=max_workers, max_stocks=None, timeout_per_stock=15.0, progress_callback=progress_callback)
+        results = parallel_process_stocks(tickers, process_weinstein, max_workers=20, max_stocks=None, timeout_per_stock=1.0, progress_callback=progress_callback)
         
         # Group by stage
         grouped = {
