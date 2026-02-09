@@ -39,3 +39,4 @@ wheels/
 brain/
 downloads/
 scanner_cache/
+.vscode/

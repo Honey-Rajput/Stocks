@@ -385,7 +385,7 @@ class AnalysisEngine:
 
     @staticmethod
     def get_smart_money_stocks(tickers, max_results=20, max_workers=4, progress_callback=None):
-        """Smart Money Concept scanner."""
+        """Smart Money Concept scanner - Detects institutional activity patterns."""
         from performance_utils import parallel_process_stocks, batch_download_data
         
         def process_smc(ticker):
@@ -406,29 +406,81 @@ class AnalysisEngine:
                 if 'Volume' not in df.columns:
                     return None
                 
-                # Calculate volume spike
-                avg_volume = df['Volume'].iloc[-20:].mean()
+                # Calculate multiple volume metrics
+                avg_volume_20 = df['Volume'].iloc[-20:].mean()
+                avg_volume_50 = df['Volume'].iloc[-50:].mean()
                 current_volume = df['Volume'].iloc[-1]
-                volume_spike = ((current_volume - avg_volume) / avg_volume) * 100 if avg_volume > 0 else 0
+                prev_volume = df['Volume'].iloc[-2]
                 
-                if volume_spike < ScannerConfig.SMC_MIN_VOLUME_SPIKE:
+                # Volume spike calculations
+                volume_spike_20 = ((current_volume - avg_volume_20) / avg_volume_20) * 100 if avg_volume_20 > 0 else 0
+                volume_spike_50 = ((current_volume - avg_volume_50) / avg_volume_50) * 100 if avg_volume_50 > 0 else 0
+                volume_surge = ((current_volume - prev_volume) / prev_volume) * 100 if prev_volume > 0 else 0
+                
+                # Price action
+                price = df['Close'].iloc[-1]
+                price_change_5d = ((df['Close'].iloc[-1] - df['Close'].iloc[-5]) / df['Close'].iloc[-5]) * 100
+                price_change_10d = ((df['Close'].iloc[-1] - df['Close'].iloc[-10]) / df['Close'].iloc[-10]) * 100
+                
+                # Detect patterns
+                signal_type = "Neutral"
+                institutional_note = ""
+                score = 0
+                
+                # Pattern 1: Volume Breakout (high volume + price up)
+                if volume_spike_20 >= 30 and price_change_5d > 1:
+                    signal_type = "Breakout"
+                    institutional_note = "Strong volume with upward price momentum"
+                    score = min(100, 60 + volume_spike_20/2 + price_change_5d*5)
+                
+                # Pattern 2: Accumulation (steady high volume, price consolidation)
+                elif avg_volume_20 > avg_volume_50 * 1.2 and abs(price_change_5d) < 2:
+                    signal_type = "Accumulation"
+                    institutional_note = "Consistent high volume with price consolidation"
+                    score = min(100, 55 + (avg_volume_20/avg_volume_50 - 1)*50)
+                
+                # Pattern 3: Absorption (high volume, price not dropping)
+                elif volume_spike_20 >= 20 and price_change_5d >= -1:
+                    signal_type = "Absorption"
+                    institutional_note = "High volume supporting price levels"
+                    score = min(100, 50 + volume_spike_20/2)
+                
+                # Pattern 4: Re-accumulation (volume spike after pullback)
+                elif volume_spike_20 >= 25 and price_change_10d < 0 and price_change_5d > 0:
+                    signal_type = "Re-accumulation"
+                    institutional_note = "Volume surge after pullback, potential reversal"
+                    score = min(100, 55 + volume_spike_20/2 + abs(price_change_10d)*2)
+                
+                # Pattern 5: Volume surge (any significant volume activity)
+                elif volume_spike_20 >= 20 or volume_surge >= 50:
+                    signal_type = "Volume Surge"
+                    institutional_note = "Unusual volume activity detected"
+                    score = min(100, 45 + max(volume_spike_20, volume_surge)/2)
+                
+                # Minimum score threshold
+                if score < 50:
                     return None
                 
-                price = df['Close'].iloc[-1]
-                price_change = ((df['Close'].iloc[-1] - df['Close'].iloc[-5]) / df['Close'].iloc[-5]) * 100
+                # Calculate estimated delivery percentage
+                delivery_pct = min(100, volume_spike_20 * 0.7)
                 
-                # Simple SMC score
-                score = min(100, 50 + (volume_spike / 2) + abs(price_change))
+                # Determine signal strength
+                if score >= 75:
+                    strength = "Strong"
+                elif score >= 60:
+                    strength = "Moderate"
+                else:
+                    strength = "Weak"
                 
                 return {
                     'Stock Symbol': ticker,
                     'Current Price': round(price, 2),
-                    'Signal Type (Accumulation / Breakout / Absorption / Re-accumulation)': 'Breakout' if price_change > 2 else 'Accumulation',
-                    'Volume Spike %': round(volume_spike, 1),
-                    'Delivery %': round(volume_spike * 0.7, 1),  # Estimated
-                    'Institutional Activity (Yes/No + short note)': 'Yes - High volume activity detected',
+                    'Signal Type (Accumulation / Breakout / Absorption / Re-accumulation)': signal_type,
+                    'Volume Spike %': round(volume_spike_20, 1),
+                    'Delivery %': round(delivery_pct, 1),
+                    'Institutional Activity (Yes/No + short note)': f"Yes - {institutional_note}",
                     'Smart Money Score (0–100)': round(score, 1),
-                    'Signal Strength (Weak / Moderate / Strong)': 'Strong' if score > 75 else 'Moderate' if score > 60 else 'Weak'
+                    'Signal Strength (Weak / Moderate / Strong)': strength
                 }
             except Exception as e:
                 print(f"Error processing {ticker}: {e}")
@@ -548,6 +600,7 @@ class AnalysisEngine:
                             info = fast_info
                 except Exception:
                     # If info fetch fails, try fast_info
+                    # If info fetch fails, try fast_info
                     try:
                         if hasattr(t, 'fast_info'):
                             info = t.fast_info
@@ -652,6 +705,7 @@ class AnalysisEngine:
                 }
             except Exception as e:
                 # Log error for debugging but don't fail completely
+                print(f"[DEBUG] Error in process_long_term for {ticker}: {e}")
                 return None
         
         # Use all tickers provided, don't limit artificially

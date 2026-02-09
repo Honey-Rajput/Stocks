@@ -199,13 +199,18 @@ timeframe = st.sidebar.selectbox("Timeframe",
     options=["1m", "5m", "15m", "1h", "4h", "1d", "1wk", "1mo"],
     index=5) # Default to 1d
 
-# AI Configuration (Using st.secrets for GitHub safety)
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+# AI Configuration (Using st.secrets for GitHub safety, .env for local, or fallback)
 try:
     MODEL_URL = st.secrets["MODEL_URL"]
     MODEL_KEY = st.secrets["MODEL_KEY"]
 except:
-    MODEL_URL = "https://api.euron.one/api/v1/euri/chat/completions"
-    MODEL_KEY = "euri-547dc00208e76ce2d4150524fa1461bf55f8183a73c7419f9f8bd6410a76d743"
+    # Try environment variables first, then default to hardcoded fallback
+    MODEL_URL = os.getenv("EURI_API_URL", "https://api.euron.one/api/v1/euri/chat/completions")
+    MODEL_KEY = os.getenv("EURI_API_KEY", "euri-547dc00208e76ce2d4150524fa1461bf55f8183a73c7419f9f8bd6410a76d743")
 
 # Default AI settings (hidden from UI)
 use_ai = True
@@ -245,7 +250,7 @@ if ticker:
         df = engine.data
         
         # Tabs structure consolidated to fix blank tab issues
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
             "📊 Agent Analysis", 
             "🤖 AI Insights", 
             "📈 Technical Charts", 
@@ -256,7 +261,8 @@ if ticker:
             "🎯 Swing Trading (15–20 Days)",
             "⏳ Long Term Investing",
             "🗓️ Cyclical Stocks by Quarter",
-            "📌 Stage Analysis"
+            "📌 Stage Analysis",
+            "📊 15-Day History"
         ])
         
         with tab1:
@@ -942,6 +948,21 @@ if ticker:
                             else: st.info("No stocks currently in the declining stage.")
                     except Exception as e:
                         st.error(f"Scanner error: {str(e)}")
+        
+        # ===== Tab 12: 15-Day History =====
+        with tab12:
+            st.subheader("📊 15-Day Scanner History & Analysis")
+            if show_all_scanners_history is not None:
+                history_view = st.radio("View Mode:", ["Individual Scanner", "Compare All"], horizontal=True)
+                if history_view == "Individual Scanner":
+                    show_all_scanners_history()
+                else:
+                    if compare_scanners_across_time is not None:
+                        compare_scanners_across_time()
+                    else:
+                        st.warning("Compare feature unavailable.")
+            else:
+                st.warning("History UI module not loaded. Please check scanner_history_ui.py.")
 
     except Exception as e:
         st.error(f"Error fetching data for {ticker}: {str(e)}")

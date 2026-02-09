@@ -25,8 +25,8 @@ class ScannerConfig:
     SWING_MAX_PRICE_FILTER = None  # No upper limit
     
     # SMC Scanner
-    SMC_MIN_VOLUME_SPIKE = 50  # %
-    SMC_MIN_ROWS = 100
+    SMC_MIN_VOLUME_SPIKE = 30  # % - Reduced from 50 to catch more opportunities
+    SMC_MIN_ROWS = 50  # Reduced from 100 to include more stocks
     SMC_SPREAD_RATIO = 0.8
     
     # Cyclical Scanner

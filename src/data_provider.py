@@ -88,6 +88,7 @@ class Ticker:
 
     @property
     def info(self):
+        print(f"[DEBUG] Ticker.info called for {self.ticker}")
         if self._info is not None:
             return self._info
 
@@ -107,6 +108,26 @@ class Ticker:
         except Exception:
             pass
 
+        # ✅ Fallback to real yfinance if cache is empty OR missing critical data (like marketCap)
+        has_critical_data = info.get('marketCap') and info.get('marketCap') > 0
+        
+        if (not info or not has_critical_data) and _real_yf is not None:
+            try:
+                print(f"[DEBUG] Fallback to real yfinance for {self.ticker}")
+                t = _real_yf.Ticker(f"{self.ticker}.NS")
+                real_info = t.info
+                print(f"[DEBUG] Got info for {self.ticker}: {list(real_info.keys())[:5] if real_info else 'EMPTY'}")
+                
+                # Merge real info into cached info (real info takes precedence)
+                if real_info:
+                    info.update(real_info)
+            except Exception as e:
+                print(f"[DEBUG] Fallback error for {self.ticker}: {e}")
+                pass
+        else:
+             if _real_yf is None:
+                 print(f"[DEBUG] _real_yf is None! Import failed?")
+
         self._info = info
         return self._info
 
@@ -119,9 +140,25 @@ class Ticker:
         try:
             if FundamentalCache is not None:
                 data = FundamentalCache.get_fundamental_data(self.ticker, {})
-                fi['market_cap'] = data.get('market_cap') if data else None
+                if data:
+                    fi['market_cap'] = data.get('market_cap')
         except Exception:
-            fi['market_cap'] = None
+            pass
+
+        # ✅ Fallback to real yfinance
+        if not fi and _real_yf is not None:
+            try:
+                t = _real_yf.Ticker(f"{self.ticker}.NS")
+                if hasattr(t, 'fast_info'):
+                    real_fi = t.fast_info
+                    if real_fi:
+                        # Convert fast_info object to dict-like if needed or just return it
+                        # But analysis_engine expects dict or object access. 
+                        # fast_info in yfinance is an object.
+                        # Here we return a dict for compatibility with our cache wrapper
+                        fi['market_cap'] = real_fi.market_cap
+            except Exception:
+                pass
 
         self._fast_info = fi
         return self._fast_info
