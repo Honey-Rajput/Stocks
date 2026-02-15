@@ -187,13 +187,41 @@ st.sidebar.markdown(f"*Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S
 st.sidebar.markdown('<div class="version-tag">UI v2.1</div>', unsafe_allow_html=True)
 
 # Consolidated stock selection (Ticker and Name in "One Place")
-selected_stock_str = st.sidebar.selectbox("Select Stock (Ticker or Name)", 
-                                        options=stock_options,
-                                        index=stock_options.index("RELIANCE - RELIANCE INDUSTRIES LTD") if "RELIANCE - RELIANCE INDUSTRIES LTD" in stock_options else 0,
-                                        help="Search by typing ticker or company name. The list is searchable.")
+# Add a filter/search box to narrow down the dropdown options (Fix for Ctrl+A issue)
+filter_text = st.sidebar.text_input("🔎 Search Stock", placeholder="Type to filter list...", help="Type here to filter the dropdown below. Ctrl+A works here!")
 
-# Get the symbol from the selected string and add .NS for Yahoo Finance
-ticker = f"{nse_stocks_dict[selected_stock_str]}.NS"
+# Filter options based on text input
+if filter_text:
+    filtered_options = [s for s in stock_options if filter_text.lower() in s.lower()]
+    # If no match, show all or show warning? Let's show warning if empty but keep list if possible, or just empty list.
+    # Better UX: if empty, show "No match" in dropdown
+    if not filtered_options:
+        filtered_options = ["No matching stocks found"]
+else:
+    filtered_options = stock_options
+
+# Index logic: Try to keep previous selection if still in list, else default to 0
+current_index = 0
+default_stock = "RELIANCE - RELIANCE INDUSTRIES LTD"
+
+# If we have a filter, and the default stock is in it, maybe use that? 
+# Or just default to 0 (top result) which is usually what user wants after typing.
+if not filter_text and default_stock in filtered_options:
+    current_index = filtered_options.index(default_stock)
+
+selected_stock_str = st.sidebar.selectbox("Select Stock", 
+                                        options=filtered_options,
+                                        index=current_index)
+
+# Handle "No match" case
+if selected_stock_str == "No matching stocks found":
+    st.warning("No stock matches your search.")
+    # Fallback to avoid crash?
+    # Maybe don't run analysis yet
+    ticker = None
+else:
+    # Get the symbol from the selected string and add .NS for Yahoo Finance
+    ticker = f"{nse_stocks_dict[selected_stock_str]}.NS"
 
 timeframe = st.sidebar.selectbox("Timeframe", 
     options=["1m", "5m", "15m", "1h", "4h", "1d", "1wk", "1mo"],

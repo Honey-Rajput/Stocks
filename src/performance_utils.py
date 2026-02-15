@@ -255,13 +255,18 @@ def batch_download_data(tickers: List[str], period: str = '60d', interval: str =
         
     results = {}
     
-    # Chunk tickers into batches of 300 (safer than 500 for heavy data)
-    chunk_size = 300
+    # Chunk tickers into batches
+    # Use smaller batches for long periods to avoid timeouts/errors
+    if 'y' in period or 'max' in period:
+        chunk_size = 50  # Smaller chunks for heavy data (10y)
+    else:
+        chunk_size = 300 # Larger chunks for short data
+        
     chunks = [formatted_tickers[i:i + chunk_size] for i in range(0, len(formatted_tickers), chunk_size)]
     
     for i, chunk in enumerate(chunks):
         try:
-            # print(f"Downloading batch {i+1}/{len(chunks)} ({len(chunk)} stocks)...")
+            print(f"Downloading batch {i+1}/{len(chunks)} ({len(chunk)} stocks)...")
             data = real_yf.download(
                 chunk,
                 period=period,
@@ -273,6 +278,9 @@ def batch_download_data(tickers: List[str], period: str = '60d', interval: str =
                 timeout=60
             )
             
+            # Debug: Print data structure
+            # print(f"Batch {i+1} downloaded. Data shape: {data.shape}, Columns: {data.columns}")
+            
             # Handle multi-ticker data structure
             if isinstance(data, pd.DataFrame) and isinstance(data.columns, pd.MultiIndex):
                 # Iterate through level 0 (Tickers)
@@ -282,23 +290,47 @@ def batch_download_data(tickers: List[str], period: str = '60d', interval: str =
                         # Check for sufficient data
                         if not ticker_df.empty and len(ticker_df) >= 20: 
                             clean_name = str(ticker).replace(".NS", "")
-                            # Standardize columns if needed (yfinance usually returns Open, High, Low, Close, Volume)
                             results[clean_name] = ticker_df
-                    except Exception:
+                            # print(f"Cached {clean_name} ({len(ticker_df)} rows)")
+                    except Exception as e:
+                        print(f"Error accessing ticker {ticker}: {e}")
                         continue
             
             # Handle single ticker returned as standard DataFrame
             elif isinstance(data, pd.DataFrame) and not data.empty:
-               if len(chunk) == 1:
-                   clean_name = chunk[0].replace(".NS", "")
-                   results[clean_name] = data
-               
+                # If explicit single ticker requested, we're good
+                if len(chunk) == 1:
+                    clean_name = chunk[0].replace(".NS", "")
+                    results[clean_name] = data
+                else:
+                    # Ambiguous case: Asked for N > 1, got 1 DataFrame.
+                    # This implies valid data for unknown ticker (or all merged? unlikely with group_by='ticker').
+                    # Fallback to serial download for this chunk to be safe.
+                    print(f"Warning: Batch {i+1} returned ambiguous/single-index DataFrame. Falling back to serial download.")
+                    raise ValueError("Ambiguous batch result")
+
         except Exception as e:
-            # print(f"Batch {i+1} failed: {e}")
-            # Fallback for this chunk: slow individual download
-            pass
+            # Fallback: Serial download for this chunk
+            # print(f"Batch {i+1} falling back to serial: {e}")
+            for t in chunk:
+                try:
+                    clean = t.replace('.NS', '')
+                    # Skip if already cached/handled (though in this function we start fresh)
+                    df = real_yf.download(
+                        [t],
+                        period=period,
+                        interval=interval,
+                        auto_adjust=True,
+                        progress=False,
+                        threads=False,
+                        timeout=10
+                    )
+                    if not df.empty:
+                        results[clean] = df
+                except Exception:
+                    continue
         
-        # Small sleep between chunks
+        # Small sleep
         if len(chunks) > 1:
             time.sleep(1.0)
             

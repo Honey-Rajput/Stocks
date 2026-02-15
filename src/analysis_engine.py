@@ -771,29 +771,37 @@ class AnalysisEngine:
                             ret = ((end_price - start_price) / start_price) * 100
                             quarterly_returns[f'Q{q}'].append(ret)
                 
-                # Find best quarter
-                avg_returns = {q: sum(returns) / len(returns) if returns else 0 for q, returns in quarterly_returns.items()}
+                # Find best QUALIFYING quarter
+                best_q = None
+                best_return = -999
+                best_prob = 0
                 
-                best_q = max(avg_returns, key=avg_returns.get)
-                best_return = avg_returns[best_q]
+                for q, returns in quarterly_returns.items():
+                    if not returns:
+                        continue
+                        
+                    avg_ret = sum(returns) / len(returns)
+                    pos_years = sum(1 for r in returns if r > 0)
+                    probability = pos_years / len(returns)
+                    
+                    # Check criteria
+                    if avg_ret >= ScannerConfig.CYCLICAL_MIN_RETURN and probability >= ScannerConfig.CYCLICAL_MIN_PROBABILITY:
+                        # Pick this if it has higher return than current best
+                        if avg_ret > best_return:
+                            best_return = avg_ret
+                            best_q = q
+                            best_prob = probability
                 
-                if best_return < ScannerConfig.CYCLICAL_MIN_RETURN:
-                    return None
-                
-                # Probability (consistency)
-                positive_years = sum(1 for r in quarterly_returns[best_q] if r > 0)
-                probability = positive_years / len(quarterly_returns[best_q]) if quarterly_returns[best_q] else 0
-                
-                if probability < ScannerConfig.CYCLICAL_MIN_PROBABILITY:
+                if best_q is None:
                     return None
                 
                 return {
                     'Stock Symbol': ticker,
                     'Sector': 'N/A',  # Would need to fetch
                     'Quarter': best_q,
-                    'Probabilistic Consistency (%)': round(probability * 100, 1),
+                    'Probabilistic Consistency (%)': round(best_prob * 100, 1),
                     'Historical Median Return (%)': round(best_return, 2),
-                    'Score': round(probability * 100 + best_return, 1)
+                    'Score': round(best_prob * 100 + best_return, 1)
                 }
             except Exception as e:
                 # print(f"Error processing {ticker}: {e}")

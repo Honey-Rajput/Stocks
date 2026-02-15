@@ -30,7 +30,7 @@ class ScannerConfig:
     SMC_SPREAD_RATIO = 0.8
     
     # Cyclical Scanner
-    CYCLICAL_MIN_PROBABILITY = 0.65  # Reduced from 0.7
+    CYCLICAL_MIN_PROBABILITY = 0.60  # Reduced to 60% (6/10 active years)
     CYCLICAL_MIN_RETURN = 2.0  # %
     CYCLICAL_MIN_INSTANCES = 5
     CYCLICAL_MIN_ROWS = 120

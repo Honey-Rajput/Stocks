@@ -176,6 +176,58 @@ def compare_scanners_across_time():
     )
     
     st.plotly_chart(fig, use_container_width=True)
+    
+    # --- Common Stocks (Confluence) ---
+    st.markdown("### 🏆 Confluence Candidates (Stocks in multiple scanners)")
+    st.info("Showing stocks that appear in the **latest** scan of multiple strategies.")
+    
+    # 1. Get latest results for each scanner
+    latest_holdings = {}
+    for scanner in scanners:
+        # Get history sorted by timestamp (desc)
+        history = history_mgr.get_history(scanner, days=5) # 5 days enough to get latest
+        if history:
+            # Sort by timestamp desc to get absolute latest
+            latest = sorted(history, key=lambda x: x['timestamp'], reverse=True)[0]
+            # stocks is a list of strings
+            latest_holdings[scanner] = set(latest['stocks'])
+            
+    # 2. Find intersections
+    all_tickers = set()
+    for stocks in latest_holdings.values():
+        all_tickers.update(stocks)
+        
+    confluence_data = []
+    for ticker in all_tickers:
+        found_in = []
+        for scanner, stocks in latest_holdings.items():
+            if ticker in stocks:
+                found_in.append(scanner.upper().replace('_', ' '))
+        
+        if len(found_in) > 1:
+            confluence_data.append({
+                "Stock Symbol": ticker,
+                "Confluence Count": len(found_in),
+                "Strategies": ", ".join(found_in)
+            })
+            
+    # 3. Display
+    if confluence_data:
+        # Sort by count desc
+        confluence_data.sort(key=lambda x: x['Confluence Count'], reverse=True)
+        
+        df_confluence = pd.DataFrame(confluence_data)
+        st.dataframe(
+            df_confluence,
+            column_config={
+                "Stock Symbol": st.column_config.TextColumn("Stock", help="Stock found in multiple strategies"),
+                "Confluence Count": st.column_config.ProgressColumn("Strength", format="%d", min_value=0, max_value=len(scanners)),
+            },
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.warning("No common stocks found across the latest scans.")
 
 
 # Usage in main app:
