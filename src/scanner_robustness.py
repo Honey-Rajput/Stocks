@@ -36,7 +36,7 @@ class ScannerConfig:
     CYCLICAL_MIN_ROWS = 120
     
     # Weinstein Scanner
-    WEINSTEIN_MIN_ROWS = 250
+    WEINSTEIN_MIN_ROWS = 200
     WEINSTEIN_PERIOD = '1y'
 
 

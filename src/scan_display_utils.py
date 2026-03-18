@@ -91,7 +91,19 @@ def normalize_scanner_results(scanner_key, results):
         cols = list(ordered_rows[0].keys())
         keep = []
         for c in cols:
-            any_val = any(row.get(c) not in (None, '', []) for row in ordered_rows)
+            def is_valid(v):
+                import numpy as np
+                import pandas as pd
+                if v is None: return False
+                if isinstance(v, (list, tuple)): return len(v) > 0
+                if isinstance(v, (np.ndarray, pd.Series, pd.DataFrame)): return len(v) > 0
+                try:
+                    if v == '': return False
+                except Exception:
+                    pass
+                return True
+            
+            any_val = any(is_valid(row.get(c)) for row in ordered_rows)
             if any_val:
                 keep.append(c)
         # Return pruned rows
