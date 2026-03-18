@@ -47,7 +47,7 @@ class ScannerHistoryManager:
         self.use_db = bool(self.db_url)
         
         if self.use_db:
-            self.engine = create_engine(self.db_url)
+            self.engine = create_engine(self.db_url, pool_pre_ping=True, pool_recycle=300)
             Base.metadata.create_all(self.engine)
             self.Session = sessionmaker(bind=self.engine)
         else:
@@ -136,10 +136,10 @@ class ScannerHistoryManager:
             )
             session.add(entry)
             session.commit()
-            print(f"✅ Saved {scanner_type} history: {stock_count} stocks at {timestamp}")
+            print(f"[OK] Saved {scanner_type} history: {stock_count} stocks at {timestamp}")
         except Exception as e:
             session.rollback()
-            print(f"❌ Error saving history: {e}")
+            print(f"[ERROR] Error saving history: {e}")
         finally:
             session.close()
     
@@ -157,7 +157,7 @@ class ScannerHistoryManager:
         
         self.local_history[scanner_type].append(entry)
         self._save_local_history()
-        print(f"✅ Saved {scanner_type} history: {stock_count} stocks at {timestamp}")
+        print(f"[OK] Saved {scanner_type} history: {stock_count} stocks at {timestamp}")
     
     def get_history(self, scanner_type, days=15):
         """Get scan history for last N days."""

@@ -23,8 +23,8 @@ class PostgresDBManager:
         if not self.db_url:
             raise ValueError("DATABASE_URL not found in environment variables")
         
-        # Create engine
-        self.engine = create_engine(self.db_url)
+        # Create engine with connection pooling recycling to prevent SSL drop
+        self.engine = create_engine(self.db_url, pool_pre_ping=True, pool_recycle=300)
         
         # Create tables if they don't exist
         Base.metadata.create_all(self.engine)
@@ -62,7 +62,7 @@ class PostgresDBManager:
                 session.add(new_entry)
             
             session.commit()
-            print(f"✅ Saved {len(results)} items to DB for {scanner_type}")
+            print(f"[OK] Saved {len(results)} items to DB for {scanner_type}")
             
             # Also save to history (15-day rolling window) using sanitized data
             history_mgr = get_history_manager()
@@ -74,7 +74,7 @@ class PostgresDBManager:
             
         except Exception as e:
             session.rollback()
-            print(f"❌ Error saving to DB: {e}")
+            print(f"[ERROR] Error saving to DB: {e}")
             raise e
         finally:
             session.close()
@@ -89,7 +89,7 @@ class PostgresDBManager:
                 return result.data, result.last_updated
             return None, None
         except Exception as e:
-            print(f"❌ Error reading from DB: {e}")
+            print(f"[ERROR] Error reading from DB: {e}")
             return None, None
         finally:
             session.close()

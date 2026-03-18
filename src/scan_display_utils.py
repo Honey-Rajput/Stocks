@@ -14,13 +14,13 @@ CANONICAL_COLUMNS = {
     ],
     'long_term': [
         'Stock Symbol', 'Sector', 'Market Cap', 'Revenue Growth %', 'Profit Growth %', 'ROE %', 'Debt to Equity',
-        'Long-Term Thesis (1–2 line summary)'
+        'Long-Term Thesis (1–2 line summary)', 'Confidence Score (0–100)'
     ],
     'cyclical': [
-        'Stock Symbol', 'Sector', 'Quarter', 'Probabilistic Consistency (%)', 'Historical Median Return (%)', 'Score'
+        'Stock Symbol', 'Sector', 'Quarter', 'Probabilistic Consistency (%)', 'Historical Median Return (%)', 'Confidence Score (0–100)'
     ],
     'stage_analysis': [
-        'Stock Symbol', 'Price', 'RS', 'Action'
+        'Stock Symbol', 'Price', 'RS', 'Action', 'Confidence Score (0–100)'
     ]
 }
 
@@ -29,7 +29,7 @@ KEY_MAP = {
     # swing variants
     'Confidence Score (0–100)': 'Confidence Score (0–100)',
     'Confidence Score': 'Confidence Score (0–100)',
-    'Score': 'Smart Money Score (0–100)',
+    'Score': 'Confidence Score (0–100)',
     'Smart Money Score (0–100)': 'Smart Money Score (0–100)',
 
     # smc variants

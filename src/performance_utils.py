@@ -260,7 +260,7 @@ def batch_download_data(tickers: List[str], period: str = '60d', interval: str =
     if 'y' in period or 'max' in period:
         chunk_size = 50  # Smaller chunks for heavy data (10y)
     else:
-        chunk_size = 300 # Larger chunks for short data
+        chunk_size = 150 # Safer chunk size for faster individual requests and less stalls
         
     chunks = [formatted_tickers[i:i + chunk_size] for i in range(0, len(formatted_tickers), chunk_size)]
     
@@ -283,18 +283,20 @@ def batch_download_data(tickers: List[str], period: str = '60d', interval: str =
             
             # Handle multi-ticker data structure
             if isinstance(data, pd.DataFrame) and isinstance(data.columns, pd.MultiIndex):
-                # Iterate through level 0 (Tickers)
-                for ticker in data.columns.levels[0]:
-                    try:
-                        ticker_df = data[ticker].dropna(how='all')
-                        # Check for sufficient data
-                        if not ticker_df.empty and len(ticker_df) >= 20: 
-                            clean_name = str(ticker).replace(".NS", "")
-                            results[clean_name] = ticker_df
-                            # print(f"Cached {clean_name} ({len(ticker_df)} rows)")
-                    except Exception as e:
-                        print(f"Error accessing ticker {ticker}: {e}")
-                        continue
+                # Optimization: df.xs is much faster than repeatedly indexing the top level
+                try:
+                    for ticker in data.columns.levels[0]:
+                        try:
+                            ticker_df = data.xs(ticker, axis=1, level=0).dropna(how='all')
+                            # Check for sufficient data
+                            if not ticker_df.empty and len(ticker_df) >= 20: 
+                                clean_name = str(ticker).replace(".NS", "")
+                                results[clean_name] = ticker_df
+                        except Exception as e:
+                            print(f"Error accessing ticker {ticker}: {e}")
+                            continue
+                except Exception as e:
+                    print(f"Extraction error: {e}")
             
             # Handle single ticker returned as standard DataFrame
             elif isinstance(data, pd.DataFrame) and not data.empty:

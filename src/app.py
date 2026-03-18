@@ -1,4 +1,18 @@
 import streamlit as st
+import streamlit.components.v1 as components
+
+# Keep Streamlit awake by triggering events in the browser repeatedly
+components.html(
+    '''
+    <script>
+    setInterval(function() {
+        window.parent.postMessage('ping', '*');
+    }, 60000);
+    </script>
+    ''',
+    width=0,
+    height=0,
+)
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from analysis_engine import AnalysisEngine
@@ -732,7 +746,8 @@ if ticker:
             
             if cached_results:
                 st.success(f"✅ Loaded {len(cached_results)} companies from Database (Last Updated: {last_updated.strftime('%H:%M %d %b')})")
-                display_df = pd.DataFrame(add_tradingview_column(cached_results))
+                norm = normalize_scanner_results('long_term', cached_results) if normalize_scanner_results else cached_results
+                display_df = pd.DataFrame(add_tradingview_column(norm))
                 st.dataframe(display_df, 
                              column_config={
                                  "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="symbol=NSE:(.*)")
@@ -770,7 +785,8 @@ if ticker:
                         elapsed = time.time() - start_time
                         if lt_stocks:
                             status_text.success(f"✅ Found {len(lt_stocks)} fundamentally strong companies in {elapsed:.1f}s")
-                            lt_stocks = add_tradingview_column(lt_stocks)
+                            norm_lt = normalize_scanner_results('long_term', lt_stocks) if normalize_scanner_results else lt_stocks
+                            lt_stocks = add_tradingview_column(norm_lt)
                             st.dataframe(pd.DataFrame(lt_stocks), 
                                          column_config={
                                              "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="symbol=NSE:(.*)")
@@ -783,7 +799,8 @@ if ticker:
                             from scanner_robustness import ScannerConfig
                             if lt_stocks and any(isinstance(r, dict) and r.get('_from_cache') for r in lt_stocks):
                                 status_text.info("No live fundamentals available; showing cached fundamental candidates.")
-                                lt_stocks = add_tradingview_column(lt_stocks)
+                                norm_lt = normalize_scanner_results('long_term', lt_stocks) if normalize_scanner_results else lt_stocks
+                                lt_stocks = add_tradingview_column(norm_lt)
                                 st.dataframe(pd.DataFrame(lt_stocks), 
                                              column_config={
                                                  "Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="symbol=NSE:(.*)")
@@ -847,28 +864,32 @@ if ticker:
                         
                         with sub_q1:
                             if cyclical_groups["Q1"]:
-                                q1 = add_tradingview_column(cyclical_groups["Q1"])
+                                norm_q1 = normalize_scanner_results('cyclical', cyclical_groups["Q1"]) if normalize_scanner_results else cyclical_groups["Q1"]
+                                q1 = add_tradingview_column(norm_q1)
                                 st.dataframe(pd.DataFrame(q1), 
                                              column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                              use_container_width=True)
                             else: st.info("No significant Q1 outperformers found in this sample.")
                         with sub_q2:
                             if cyclical_groups["Q2"]:
-                                q2 = add_tradingview_column(cyclical_groups["Q2"])
+                                norm_q2 = normalize_scanner_results('cyclical', cyclical_groups["Q2"]) if normalize_scanner_results else cyclical_groups["Q2"]
+                                q2 = add_tradingview_column(norm_q2)
                                 st.dataframe(pd.DataFrame(q2), 
                                              column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                              use_container_width=True)
                             else: st.info("No significant Q2 outperformers found in this sample.")
                         with sub_q3:
                             if cyclical_groups["Q3"]:
-                                q3 = add_tradingview_column(cyclical_groups["Q3"])
+                                norm_q3 = normalize_scanner_results('cyclical', cyclical_groups["Q3"]) if normalize_scanner_results else cyclical_groups["Q3"]
+                                q3 = add_tradingview_column(norm_q3)
                                 st.dataframe(pd.DataFrame(q3), 
                                              column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                              use_container_width=True)
                             else: st.info("No significant Q3 outperformers found in this sample.")
                         with sub_q4:
                             if cyclical_groups["Q4"]:
-                                q4 = add_tradingview_column(cyclical_groups["Q4"])
+                                norm_q4 = normalize_scanner_results('cyclical', cyclical_groups["Q4"]) if normalize_scanner_results else cyclical_groups["Q4"]
+                                q4 = add_tradingview_column(norm_q4)
                                 st.dataframe(pd.DataFrame(q4), 
                                              column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                              use_container_width=True)
@@ -955,28 +976,32 @@ if ticker:
                 
                 with s_tabs[0]:
                     if stage_results.get("Stage 1 - Basing"):
-                        s1 = add_tradingview_column(stage_results["Stage 1 - Basing"])
+                        norm_s1 = normalize_scanner_results('stage_analysis', stage_results["Stage 1 - Basing"]) if normalize_scanner_results else stage_results["Stage 1 - Basing"]
+                        s1 = add_tradingview_column(norm_s1)
                         st.dataframe(pd.DataFrame(s1), 
                                      column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                      use_container_width=True)
                     else: st.info("No stocks currently in the basing stage.")
                 with s_tabs[1]:
                     if stage_results.get("Stage 2 - Advancing"):
-                        s2 = add_tradingview_column(stage_results["Stage 2 - Advancing"])
+                        norm_s2 = normalize_scanner_results('stage_analysis', stage_results["Stage 2 - Advancing"]) if normalize_scanner_results else stage_results["Stage 2 - Advancing"]
+                        s2 = add_tradingview_column(norm_s2)
                         st.dataframe(pd.DataFrame(s2), 
                                      column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                      use_container_width=True)
                     else: st.info("No stocks currently in the advancing stage.")
                 with s_tabs[2]:
                     if stage_results.get("Stage 3 - Top"):
-                        s3 = add_tradingview_column(stage_results["Stage 3 - Top"])
+                        norm_s3 = normalize_scanner_results('stage_analysis', stage_results["Stage 3 - Top"]) if normalize_scanner_results else stage_results["Stage 3 - Top"]
+                        s3 = add_tradingview_column(norm_s3)
                         st.dataframe(pd.DataFrame(s3), 
                                      column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                      use_container_width=True)
                     else: st.info("No stocks currently in the top/distribution stage.")
                 with s_tabs[3]:
                     if stage_results.get("Stage 4 - Declining"):
-                        s4 = add_tradingview_column(stage_results["Stage 4 - Declining"])
+                        norm_s4 = normalize_scanner_results('stage_analysis', stage_results["Stage 4 - Declining"]) if normalize_scanner_results else stage_results["Stage 4 - Declining"]
+                        s4 = add_tradingview_column(norm_s4)
                         st.dataframe(pd.DataFrame(s4), 
                                      column_config={"Stock Symbol": st.column_config.LinkColumn("Stock Symbol", display_text="NSE:(.*)")},
                                      use_container_width=True)

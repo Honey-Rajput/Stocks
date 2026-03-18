@@ -728,10 +728,11 @@ class AnalysisEngine:
             timeout_per_stock=5.0,  # Reduced timeout to 5 seconds per stock
             progress_callback=progress_callback
         )
-        # Sort by score and remove score from output
+        # Sort by score and convert to Confidence Score
         results = sorted(results, key=lambda x: x.get('_score', 0), reverse=True)
         for r in results:
-            r.pop('_score', None)
+            score = r.pop('_score', 0)
+            r['Confidence Score (0–100)'] = min(100, score)
         return results[:max_results]
 
     @staticmethod

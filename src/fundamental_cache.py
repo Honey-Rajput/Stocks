@@ -184,10 +184,10 @@ class FundamentalCache:
                     cache.cache_data(ticker, data)
                     successful += 1
             
-            print(f"✅ Cached fundamental data for {successful} stocks")
+            print(f"[OK] Cached fundamental data for {successful} stocks")
             
         except Exception as e:
-            print(f"❌ Error building index: {e}")
+            print(f"[ERROR] Error building index: {e}")
     
     @staticmethod
     def get_fundamental_data(ticker, yf_info):
