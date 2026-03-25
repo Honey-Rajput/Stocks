@@ -11,6 +11,8 @@ pytz
 psycopg2-binary
 sqlalchemy
 yfinance
+python-telegram-bot
+schedule
 
 # Optional/fallback helpers
 beautifulsoup4
